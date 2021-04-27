@@ -9,9 +9,6 @@ function poti.load()
   dest = poti.Rect(0, 0, 160*4, 95*4)
 end
 
-function poti.update(dt)
-end
-
 function poti.draw()
   poti.target(canvas)
   poti.clear()
@@ -19,5 +16,25 @@ function poti.draw()
   poti.target()
   
   canvas:draw(dest)
+end
+```
+
+The idea is to have a minimal optimized C core, and build the game engine (with asset manager, scene manager, ...) on top of the Lua framework.
+
+```main.lua
+local Image = require "graphics.image"
+local Canvas = require "graphics.canvas"
+
+function poti.load()
+  tex = Image("image.png")
+  canvas = Canvas(160, 95)
+end
+
+function poti.draw()
+  canvas:set()
+  poti.clear()
+  tex:draw()
+  canvas:unset()
+  canvas:draw(0, 0, 0, 4, 4)
 end
 ```
