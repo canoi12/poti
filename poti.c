@@ -22,6 +22,38 @@ struct Context {
 #define poti() (&_ctx)
 struct Context _ctx;
 
+static const char *boot_lua = "\
+local traceback = debug.traceback\
+package.path = package.path .. ';' .. 'core/?.lua;core/?/init.lua'\
+local function _error(msg)\
+    trace = traceback(\"\", 1)\
+    print(msg, trace) \
+end\
+function _step()\
+    local dt = poti.delta()\
+    if poti.update then poti.update(dt) end\
+    if poti.draw then poti.draw end\
+end\
+function poti._load()\
+    if poti.load then xpcall(poti.load, _error) end\
+end\
+function poti._step()\
+        xpcall(_step, _error)\
+end\
+function poti.run()\
+    local dt = poti.delta()\
+    if poti.load then poti.load() end\
+    while poti.running() do\
+        if poti.update then poti.update(dt) end\
+        if poti.draw then poti.draw() end\
+    end\
+    return 0\
+end\
+function poti.error()\
+end\
+xpcall(function() require \"main\" end, _error)\
+";
+
 static int luaopen_poti(lua_State *L);
 static int luaopen_point(lua_State *L);
 static int luaopen_rect(lua_State *L);
@@ -107,7 +139,7 @@ static int poti_mouse_released(lua_State *L);
 int poti_init(int flags) {
     poti()->L = luaL_newstate();
 
-    FILE *fp = fopen("core/boot.lua", "rb");
+    /*FILE *fp = fopen("core/boot.lua", "rb");
     if (!fp) {
         fprintf(stderr, "Failed to open core/boot.lua\n");
         exit(0);
@@ -121,7 +153,7 @@ int poti_init(int flags) {
     fread(buf, sz, 1, fp);
     buf[sz] = '\0';
 
-    fclose(fp);
+    fclose(fp);*/
 
     lua_State *L = poti()->L;
 
@@ -135,7 +167,8 @@ int poti_init(int flags) {
 
     tea_init(&conf);
     mo_init(0);
-    luaL_dostring(L, buf);
+    // luaL_dostring(L, buf);
+    luaL_dostring(L, boot_lua);
 
     lua_getglobal(L, "poti");
     if (!lua_isnil(L, -1)) {
