@@ -22,37 +22,35 @@ struct Context {
 #define poti() (&_ctx)
 struct Context _ctx;
 
-static const char *boot_lua = "\
-local traceback = debug.traceback\
-package.path = package.path .. ';' .. 'core/?.lua;core/?/init.lua'\
-local function _error(msg)\
-    trace = traceback(\"\", 1)\
-    print(msg, trace) \
-end\
-function _step()\
-    local dt = poti.delta()\
-    if poti.update then poti.update(dt) end\
-    if poti.draw then poti.draw end\
-end\
-function poti._load()\
-    if poti.load then xpcall(poti.load, _error) end\
-end\
-function poti._step()\
-        xpcall(_step, _error)\
-end\
-function poti.run()\
-    local dt = poti.delta()\
-    if poti.load then poti.load() end\
-    while poti.running() do\
-        if poti.update then poti.update(dt) end\
-        if poti.draw then poti.draw() end\
-    end\
-    return 0\
-end\
-function poti.error()\
-end\
-xpcall(function() require \"main\" end, _error)\
-";
+static const char *boot_lua = "local traceback = debug.traceback\n"
+"package.path = package.path .. ';' .. 'core/?.lua;core/?/init.lua'\n"
+"local function _error(msg)\n"
+"    trace = traceback('', 1)\n"
+"    print(msg, trace)\n"
+"end\n"
+"local function _step()\n"
+"    local dt = poti.delta()\n"
+"    if poti.update then poti.update(dt) end\n"
+"    if poti.draw then poti.draw() end\n"
+"end\n"
+"function poti._load()\n"
+"    if poti.load then xpcall(poti.load, _error) end\n"
+"end\n"
+"function poti._step()\n"
+"    xpcall(_step, _error)\n"
+"end\n"
+"function poti.run()\n"
+"    local dt = poti.delta()\n"
+"    if poti.load then poti.load() end\n"
+"    while poti.running() do\n"
+"        if poti.update then poti.update(dt) end\n"
+"        if poti.draw then poti.draw() end\n"
+"    end\n"
+"    return 0\n"
+"end\n"
+"function poti.error()\n"
+"end\n"
+"xpcall(function() require 'main' end, _error)\n";
 
 static int luaopen_poti(lua_State *L);
 static int luaopen_point(lua_State *L);
@@ -168,7 +166,11 @@ int poti_init(int flags) {
     tea_init(&conf);
     mo_init(0);
     // luaL_dostring(L, buf);
-    luaL_dostring(L, boot_lua);
+    if (luaL_dostring(L, boot_lua) != LUA_OK) {
+	const char *error_buf = lua_tostring(L, -1);
+	fprintf(stderr, "Failed to load Lua boot: %s\n", error_buf);
+	exit(0);
+    }
 
     lua_getglobal(L, "poti");
     if (!lua_isnil(L, -1)) {
@@ -213,8 +215,8 @@ static int _poti_step(lua_State *L) {
 }
 
 int poti_loop() {
-
     while (!tea_should_close()) {
+        tea_update_input();
         tea_begin();
         _poti_step(poti()->L);
         tea_end();
