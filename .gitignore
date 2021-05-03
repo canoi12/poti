@@ -1,0 +1,6 @@
+poti
+%.o
+*.json
+*.sublime-*
+.clangd
+*.png
