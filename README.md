@@ -19,7 +19,7 @@ function poti.draw()
 end
 ```
 
-The idea is to have a very minimal optimized C core (filesysten, render, input, audio, ..), and build the game engine (with asset manager, scene manager, packaging, editors, ...) on top of the poti framework using Lua lang.
+The idea is to have a very minimal optimized C core (filesystem, render, input, audio, ..), and build the game engine (with asset manager, scene manager, packaging, editors, ...) on top of the poti framework using Lua lang.
 
 ```main.lua
 local Image = require "graphics.image"
