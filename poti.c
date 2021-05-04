@@ -59,6 +59,8 @@ static int luaopen_texture(lua_State *L);
 static int luaopen_font(lua_State *L);
 static int luaopen_shader(lua_State *L);
 static int luaopen_audio(lua_State *L);
+static int luaopen_keyboard(lua_State *L);
+static int luaopen_mouse(lua_State *L);
 
 /* Core */
 static int poti_ver(lua_State *L);
@@ -258,6 +260,8 @@ int luaopen_poti(lua_State *L) {
         {"_Texture", luaopen_texture},
         {"_Font", luaopen_font},
         {"_Audio", luaopen_audio},
+        {"key", luaopen_keyboard},
+        {"mouse", luaopen_mouse},
         {NULL, NULL}
     };
 
