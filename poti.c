@@ -21,9 +21,32 @@ struct Context {
 
 #define poti() (&_ctx)
 struct Context _ctx;
-
 static const char *boot_lua = "local traceback = debug.traceback\n"
-"package.path = package.path .. ';' .. 'core/?.lua;core/?/init.lua'\n"
+"package.path = package.path .. ';core/?.lua;core/?/init.lua'\n"
+"local function _err(msg)\n"
+"   local trace = traceback('', 1)\n"
+"   poti.error(msg, trace)\n"
+"   print(msg, trace)\n"
+"end\n"
+"function poti.error(msg, trace)\n"
+"   poti.update = function() end\n"
+"   poti.draw = function() end\n"
+"end\n"
+"function poti.run()\n"
+"   if poti.load then poti.load() end\n"
+"   local delta = 0\n"
+"   return function()\n"
+"       dt = poti.delta()\n"
+"       if poti.update then poti.update(dt) end\n"
+"       if poti.draw then poti.draw() end\n"
+"   end\n"
+"end\n"
+"xpcall(function() require 'main' end, _err)";
+
+
+#if 0
+static const char *boot_lua = "local traceback = debug.traceback\n"
+"package.path = package.path .. ';core/?.lua;core/?/init.lua'\n"
 "local function _error(msg)\n"
 "    trace = traceback('', 1)\n"
 "    print(msg, trace)\n"
@@ -51,6 +74,7 @@ static const char *boot_lua = "local traceback = debug.traceback\n"
 "function poti.error()\n"
 "end\n"
 "xpcall(function() require 'main' end, _error)\n";
+#endif
 
 static int luaopen_poti(lua_State *L);
 static int luaopen_point(lua_State *L);
@@ -139,9 +163,10 @@ static int poti_mouse_released(lua_State *L);
 int poti_init(int flags) {
     poti()->L = luaL_newstate();
 
-    /*FILE *fp = fopen("core/boot.lua", "rb");
+#if 0
+    FILE *fp = fopen("boot.lua", "rb");
     if (!fp) {
-        fprintf(stderr, "Failed to open core/boot.lua\n");
+        fprintf(stderr, "Failed to open boot.lua\n");
         exit(0);
     }
 
@@ -153,7 +178,8 @@ int poti_init(int flags) {
     fread(buf, sz, 1, fp);
     buf[sz] = '\0';
 
-    fclose(fp);*/
+    fclose(fp);
+#endif
 
     lua_State *L = poti()->L;
 
@@ -167,13 +193,18 @@ int poti_init(int flags) {
 
     tea_init(&conf);
     mo_init(0);
-    // luaL_dostring(L, buf);
+
+#if 1
     if (luaL_dostring(L, boot_lua) != LUA_OK) {
 	const char *error_buf = lua_tostring(L, -1);
 	fprintf(stderr, "Failed to load Lua boot: %s\n", error_buf);
 	exit(0);
     }
+#else
+    luaL_dostring(L, buf);
+#endif
 
+#if 0
     lua_getglobal(L, "poti");
     if (!lua_isnil(L, -1)) {
         lua_getfield(L, -1, "_load");
@@ -188,6 +219,21 @@ int poti_init(int flags) {
         lua_pop(L, 1);
         lua_settop(L, 1);
     }
+#endif
+
+    lua_getglobal(L, "poti");
+    if (!lua_isnil(L, -1)) {
+        lua_getfield(L, -1, "run");
+        if (!lua_isnil(L, -1)) {
+            int err = lua_pcall(L, 0, 1, 0);
+            if (err) {
+                const char *str = lua_tostring(L, -1);
+                fprintf(stderr, "Lua error: %s", str);
+                exit(0);
+            }
+            lua_rawsetp(L, LUA_REGISTRYINDEX, boot_lua);
+        }
+    }
     return 1;
 }
 
@@ -199,6 +245,7 @@ int poti_deinit() {
 }
 
 static int _poti_step(lua_State *L) {
+#if 0
     lua_getglobal(L, "poti");
     if (!lua_isnil(L, -1)) {
         lua_getfield(L, -1, "_step");
@@ -213,6 +260,9 @@ static int _poti_step(lua_State *L) {
         lua_pop(L, 1);
         lua_settop(L, 1);
     }
+#endif
+    lua_rawgetp(L, LUA_REGISTRYINDEX, boot_lua);
+    lua_pcall(L, 0, 0, 0);
     return 1;
 }
 
