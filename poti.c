@@ -17,6 +17,7 @@
 
 struct Context {
     lua_State *L;
+    te_font_t *default_font;
 };
 
 #define poti() (&_ctx)
@@ -83,8 +84,6 @@ static int luaopen_texture(lua_State *L);
 static int luaopen_font(lua_State *L);
 static int luaopen_shader(lua_State *L);
 static int luaopen_audio(lua_State *L);
-static int luaopen_keyboard(lua_State *L);
-static int luaopen_mouse(lua_State *L);
 
 /* Core */
 static int poti_ver(lua_State *L);
@@ -155,10 +154,19 @@ static int poti_key_up(lua_State *L);
 static int poti_key_pressed(lua_State *L);
 static int poti_key_released(lua_State *L);
 
+static int poti_mouse_pos(lua_State *L);
 static int poti_mouse_down(lua_State *L);
 static int poti_mouse_up(lua_State *L);
 static int poti_mouse_pressed(lua_State *L);
 static int poti_mouse_released(lua_State *L);
+
+static int poti_jpad_down(lua_State *L);
+static int poti_jpad_up(lua_State *L);
+static int poti_jpad_pressed(lua_State *L);
+static int poti_jpad_released(lua_State *L);
+// poti.key_down("a")
+// poti.mouse_down(1)
+// poti.jpad_down("a") poti.jpad_down("d_down")
 
 int poti_init(int flags) {
     poti()->L = luaL_newstate();
@@ -299,6 +307,17 @@ int luaopen_poti(lua_State *L) {
         {"Texture", poti_texture},
         {"Font", poti_font},
         {"Audio", poti_audio},
+        /* Keyboard */
+        {"key_down", poti_key_down},
+        {"key_up", poti_key_up},
+        {"key_pressed", poti_key_pressed},
+        {"key_released", poti_key_released},
+        /* Mouse */
+        {"mouse_pos", poti_mouse_pos},
+        {"mouse_down", poti_mouse_down},
+        {"mouse_up", poti_mouse_up},
+        {"mouse_pressed", poti_mouse_pressed},
+        {"mouse_released", poti_mouse_released},
         {NULL, NULL}
     };
 
@@ -310,8 +329,6 @@ int luaopen_poti(lua_State *L) {
         {"_Texture", luaopen_texture},
         {"_Font", luaopen_font},
         {"_Audio", luaopen_audio},
-        {"key", luaopen_keyboard},
-        {"mouse", luaopen_mouse},
         {NULL, NULL}
     };
 
@@ -977,6 +994,10 @@ int poti_key_released(lua_State *L) {
     lua_pushboolean(L, tea_key_released(code));
     
     return 1;
+}
+
+int poti_mouse_pos(lua_State *L) {
+    return 0;
 }
 
 int poti_mouse_down(lua_State *L) {
