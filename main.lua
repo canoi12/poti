@@ -15,4 +15,5 @@ function poti.draw()
     poti.clear()
     tex:draw(d, s)
     poti.rect(d:x(), d:y(), 8, 8)
+    poti.print("kekekek")
 end

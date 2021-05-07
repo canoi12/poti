@@ -17,7 +17,7 @@ OUT = poti
 
 CFLAGS = -Wall -std=c99 `sdl2-config --cflags`
 LFLAGS = -lm -lpthread -lSDL2 -ldl `sdl2-config --libs`
-CDEFS = -DCAFE_ENGINE
+CDEFS = 
 
 OBJ = $(SRC:%.c=%.o)
 

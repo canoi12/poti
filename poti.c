@@ -7,6 +7,8 @@
 #include "tea.h"
 #include "mocha.h"
 
+#include "font8x8_basic.h"
+
 #define POINT_CLASS "Point"
 #define RECT_CLASS "Rect"
 
@@ -167,9 +169,47 @@ static int poti_jpad_released(lua_State *L);
 // poti.key_down("a")
 // poti.mouse_down(1)
 // poti.jpad_down("a") poti.jpad_down("d_down")
+//
+static te_font_t *default_font() {
+    int tex_w, tex_h;
+    tex_w = 128*8;
+    tex_h = 8;
+
+    int size = tex_w*tex_h;
+    te_color_t pixels[size];
+
+    te_font_t *font = NULL;
+    te_texture_t *tex = NULL;
+
+    int offset = 0;
+
+    for (int off = 0; off < 128; off++) {
+        char *letter = font8x8_basic[off];
+        for (int yy = 0; yy < 8; yy++) {
+            char line = letter[yy];
+            offset = (off*8)+(tex_w*yy);
+            for (int xx = 0; xx < 8; xx++) {
+               char p = line & 0x1;
+               pixels[offset+xx] = TEA_COLOR(255, 255, 255, 255*p);
+               line >>= 1;
+            }
+        }
+    }
+
+    tex = tea_texture(pixels, tex_w, tex_h, TEA_RGBA, TEA_TEXTURE_STATIC);
+    if (!tex) {
+        fprintf(stderr, "%s\n", tea_geterror());
+        exit(0);
+    }
+
+    font = tea_font_bitmap(tex, 8, 1, 0);
+
+    return font;
+}
 
 int poti_init(int flags) {
     poti()->L = luaL_newstate();
+    poti()->default_font = default_font();
 
 #if 0
     FILE *fp = fopen("boot.lua", "rb");
@@ -299,6 +339,7 @@ int luaopen_poti(lua_State *L) {
         {"circle", poti_draw_circ},
         {"rectangle", poti_draw_rect},
         {"triangle", poti_draw_tria},
+        {"print", poti_print},
         /* Audio */
         {"volume", poti_volume},
         /* Types */
@@ -924,6 +965,15 @@ int poti_draw_tria(lua_State *L) {
     }
 
         tea_triangle(points[0], points[1], points[2], points[3], points[4], points[5]);
+
+    return 0;
+}
+
+int poti_print(lua_State *L) {
+
+    const char *text = luaL_checkstring(L, 1);
+
+    tea_font_print(poti()->default_font, text, 0, 0);
 
     return 0;
 }
