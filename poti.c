@@ -1,3 +1,8 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -6,8 +11,6 @@
 
 #include "tea.h"
 #include "mocha.h"
-
-#include "font8x8_basic.h"
 
 #define POINT_CLASS "Point"
 #define RECT_CLASS "Rect"
@@ -19,7 +22,6 @@
 
 struct Context {
     lua_State *L;
-    te_font_t *default_font;
 };
 
 #define poti() (&_ctx)
@@ -33,7 +35,11 @@ static const char *boot_lua = "local traceback = debug.traceback\n"
 "end\n"
 "function poti.error(msg, trace)\n"
 "   poti.update = function() end\n"
-"   poti.draw = function() end\n"
+"   poti.draw = function()\n" 
+"       poti.print('error', 32)\n"
+"       poti.print(msg, 32, 16)\n"
+"       poti.print(trace, 32, 32)\n"
+"   end\n"
 "end\n"
 "function poti.run()\n"
 "   if poti.load then poti.load() end\n"
@@ -45,7 +51,6 @@ static const char *boot_lua = "local traceback = debug.traceback\n"
 "   end\n"
 "end\n"
 "xpcall(function() require 'main' end, _err)";
-
 
 #if 0
 static const char *boot_lua = "local traceback = debug.traceback\n"
@@ -170,46 +175,9 @@ static int poti_jpad_released(lua_State *L);
 // poti.mouse_down(1)
 // poti.jpad_down("a") poti.jpad_down("d_down")
 //
-static te_font_t *default_font() {
-    int tex_w, tex_h;
-    tex_w = 128*8;
-    tex_h = 8;
-
-    int size = tex_w*tex_h;
-    te_color_t pixels[size];
-
-    te_font_t *font = NULL;
-    te_texture_t *tex = NULL;
-
-    int offset = 0;
-
-    for (int off = 0; off < 128; off++) {
-        char *letter = font8x8_basic[off];
-        for (int yy = 0; yy < 8; yy++) {
-            char line = letter[yy];
-            offset = (off*8)+(tex_w*yy);
-            for (int xx = 0; xx < 8; xx++) {
-               char p = line & 0x1;
-               pixels[offset+xx] = TEA_COLOR(255, 255, 255, 255*p);
-               line >>= 1;
-            }
-        }
-    }
-
-    tex = tea_texture(pixels, tex_w, tex_h, TEA_RGBA, TEA_TEXTURE_STATIC);
-    if (!tex) {
-        fprintf(stderr, "%s\n", tea_geterror());
-        exit(0);
-    }
-
-    font = tea_font_bitmap(tex, 8, 1, 0);
-
-    return font;
-}
 
 int poti_init(int flags) {
     poti()->L = luaL_newstate();
-    poti()->default_font = default_font();
 
 #if 0
     FILE *fp = fopen("boot.lua", "rb");
@@ -310,7 +278,11 @@ static int _poti_step(lua_State *L) {
     }
 #endif
     lua_rawgetp(L, LUA_REGISTRYINDEX, boot_lua);
-    lua_pcall(L, 0, 0, 0);
+    if (lua_pcall(L, 0, 0, 0) != 0) {
+        const char *msg = lua_tostring(L, -1);
+        fprintf(stderr, "poti error: %s\n", msg);
+        exit(0);
+    }
     return 1;
 }
 
@@ -972,8 +944,10 @@ int poti_draw_tria(lua_State *L) {
 int poti_print(lua_State *L) {
 
     const char *text = luaL_checkstring(L, 1);
-
-    tea_font_print(poti()->default_font, text, 0, 0);
+    TEA_TNUM x, y;
+    x = luaL_optnumber(L, 2, 0);
+    y = luaL_optnumber(L, 3, 0);
+    tea_print(text, x, y);
 
     return 0;
 }
@@ -1075,5 +1049,12 @@ int poti_mouse_released(lua_State *L) {
     int button = luaL_checknumber(L, 1) - 1;
     lua_pushboolean(L, tea_mouse_released(button));
     
+    return 1;
+}
+
+int main(int argc, char ** argv) {
+    poti_init(0);
+    poti_loop();
+    poti_deinit();
     return 1;
 }

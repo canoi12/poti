@@ -24,8 +24,7 @@ function Drawable:part(x, y, w, h)
 end
 
 function Drawable:draw(x, y, angle, scale_x, scale_y, origin_x, origin_y)
-    origin = origin or {0, 0}
-    scale_x = scale_x or 1
+    --[[ scale_x = scale_x or 1
     scale_y = scale_y or 1
     angle = angle or 0
 
@@ -38,7 +37,24 @@ function Drawable:draw(x, y, angle, scale_x, scale_y, origin_x, origin_y)
 
     self.dest(x, y, w, h)
     self.origin(origin_x, origin_y)
-    self.tex:draw(self.dest, self.src, angle, self.origin, flip) 
+    self.tex:draw(self.dest, self.src, angle, self.origin, flip)]]
+    scale_x = scale_x or 1
+    scale_y = scale_y or 1
+    angle = angle or 0
+    local flip = 0
+    if scale_x < 0  then 
+        flip = flip + 1
+        scale_x = scale_x * -1
+    end
+    if scale_y < 0  then
+        flip = flip + 2
+        scale_y = scale_y * -1
+    end 
+
+    local w = self.src:width() * scale_x
+    local h = self.src:height() * scale_y
+    self.dest(x, y, w, h)
+    self.tex:draw(self.dest, self.src)
 end
 
 return Drawable

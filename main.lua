@@ -1,19 +1,20 @@
+local Image = require "graphics.image"
+local Canvas = require "core.graphics.canvas"
+
 function poti.load()
-    tex = poti.Texture("player.png")
-    d = poti.Rect(0, 0, 32, 32)
-    s = poti.Rect(0, 0, 16, 16)
-    x = 0
+    cc = Canvas(160, 95)
+    img = Image("player.png")
 end
 
 function poti.update(dt)
-    if poti.key_down('a') then x = x - 10 end
-    if poti.key_down('d') then x = x + 10 end
-    d:x(x)
+    
 end
 
 function poti.draw()
-    poti.clear()
-    tex:draw(d, s)
-    poti.rect(d:x(), d:y(), 8, 8)
-    poti.print("kekekek")
+    cc:set()
+    poti.clear(255)
+    img:draw()
+    cc:unset()
+
+    cc:draw(0, 0, 0, 4, 4)
 end
