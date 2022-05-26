@@ -9,8 +9,17 @@
 
 #include "poti.h"
 
-#include "tea.h"
+#include <SDL2/SDL.h>
 #include "mocha.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+
+#define SBTAR_IMPLEMENTATION
+#include "sbtar.h"
 
 #define POINT_CLASS "Point"
 #define RECT_CLASS "Rect"
@@ -20,13 +29,78 @@
 
 #define AUDIO_CLASS "Audio"
 
+typedef char i8;
+typedef unsigned char u8;
+typedef short i16;
+typedef unsigned short u16;
+typedef int i32;
+typedef unsigned int u32;
+typedef long i64;
+typedef unsigned long u64;
+typedef float f32;
+typedef double f64;
+
+typedef u8 color_t[4];
+
+typedef SDL_Texture Texture;
+typedef struct Font Font;
+typedef mo_audio_t Audio;
+
+struct Font {
+    struct {
+        // advance x and y
+        i32 ax, ay;
+        //bitmap width and rows
+        i32 bw, bh;
+        // bitmap left and top
+        i32 bl, bt;
+        // x offset of glyph
+        i32 tx;
+    } c[256];
+
+    Texture *tex;
+    u8 size;
+
+    stbtt_fontinfo info;
+    f32 ptsize;
+    f32 scale;
+    i32 baseline;
+    i32 height;
+    void *data;
+};
+
 struct Context {
     lua_State *L;
+    SDL_Window *window;
+    SDL_Renderer *render;
+    SDL_Event event;
+
+    f64 last_time;
+    f64 delta;
+    i32 fps, frames;
+
+    const Uint8 *keys;
+    color_t color;
+    i8 draw_mode;
+    sbtar_t pkg;
+
+    i8 is_packed;
+    i8*(*read_file)(const i8*, size_t*);
+
+    Font default_font;
+    Font *font;
+    i32(*init_font)(Font*, const void*, size_t, i32);
+    Font*(*load_font)(const i8*, i32);
+    u8*(*utf8_codepoint)(u8*, i32*);
+
+    int(*flip_from_table)(lua_State*, i32, i32*);
+    int(*point_from_table)(lua_State*, i32, SDL_Point*);
+    int(*rect_from_table)(lua_State*, i32, SDL_Rect*);
 };
 
 #define poti() (&_ctx)
 struct Context _ctx;
-static const char *boot_lua = "local traceback = debug.traceback\n"
+static const i8 *boot_lua = "local traceback = debug.traceback\n"
 "package.path = package.path .. ';core/?.lua;core/?/init.lua'\n"
 "local function _err(msg)\n"
 "   local trace = traceback('', 1)\n"
@@ -85,35 +159,24 @@ static const char *boot_lua = "local traceback = debug.traceback\n"
 #endif
 
 static int luaopen_poti(lua_State *L);
-static int luaopen_point(lua_State *L);
-static int luaopen_rect(lua_State *L);
 static int luaopen_texture(lua_State *L);
 static int luaopen_font(lua_State *L);
-static int luaopen_shader(lua_State *L);
 static int luaopen_audio(lua_State *L);
 
 /* Core */
 static int poti_ver(lua_State *L);
 static int poti_delta(lua_State *L);
 
-/* Point */
-static int poti_point(lua_State *L);
-static int poti_point_set(lua_State *L);
-static int poti_point_x(lua_State *L);
-static int poti_point_y(lua_State *L);
-
-/* Rect */
-static int poti_rect(lua_State *L);
-static int poti_rect_set(lua_State *L);
-static int poti_rect_x(lua_State *L);
-static int poti_rect_y(lua_State *L);
-static int poti_rect_width(lua_State *L);
-static int poti_rect_height(lua_State *L);
-static int poti_rect_pos(lua_State *L);
-static int poti_rect_size(lua_State *L);
+/* Filesystem */
+static int poti_file(lua_State *L);
+static int poti_file_read(lua_State *L);
+static int poti_file_write(lua_State *L);
+static int poti_file_seek(lua_State *L);
+static int poti_file_tell(lua_State *L);
+static int poti_list_folder(lua_State *L);
 
 /* Texture */
-static int poti_texture(lua_State *L);
+static int poti_new_texture(lua_State *L);
 static int poti_texture_draw(lua_State *L);
 static int poti_texture_width(lua_State *L);
 static int poti_texture_height(lua_State *L);
@@ -121,20 +184,13 @@ static int poti_texture_size(lua_State *L);
 static int poti_texture__gc(lua_State *L);
 
 /* Font */
-static int poti_font(lua_State *L);
+static int poti_new_font(lua_State *L);
 static int poti_font_print(lua_State *L);
 static int poti_font__gc(lua_State *L);
 
-/* Shader */
-static int poti_shader(lua_State *L);
-static int poti_shader_set(lua_State *L);
-static int poti_shader_unset(lua_State *L);
-static int poti_shader_send(lua_State *L);
-static int poti_shader__gc(lua_State *L);
-
 /* Audio */
 static int poti_volume(lua_State *L);
-static int poti_audio(lua_State *L);
+static int poti_new_audio(lua_State *L);
 static int poti_audio_play(lua_State *L);
 static int poti_audio_stop(lua_State *L);
 static int poti_audio_pause(lua_State *L);
@@ -150,9 +206,9 @@ static int poti_mode(lua_State *L);
 static int poti_set_target(lua_State *L);
 static int poti_draw_point(lua_State *L);
 static int poti_draw_line(lua_State *L);
-static int poti_draw_rect(lua_State *L);
-static int poti_draw_circ(lua_State *L);
-static int poti_draw_tria(lua_State *L);
+static int poti_draw_rectangle(lua_State *L);
+static int poti_draw_circle(lua_State *L);
+static int poti_draw_triangle(lua_State *L);
 static int poti_print(lua_State *L);
 
 /* Input */
@@ -175,6 +231,8 @@ static int poti_jpad_released(lua_State *L);
 // poti.mouse_down(1)
 // poti.jpad_down("a") poti.jpad_down("d_down")
 //
+
+static int s_setup_function_ptrs(struct Context *ctx);
 
 int poti_init(int flags) {
     poti()->L = luaL_newstate();
@@ -204,10 +262,30 @@ int poti_init(int flags) {
 
     char title[100];
     sprintf(title, "poti %s", POTI_VER);
-    te_config_t conf = (te_config_t){{0}};
-    conf = tea_config_init(title, 640, 380);
+    if (SDL_Init(SDL_INIT_EVERYTHING)) {
+        fprintf(stderr, "Failed to init SDL2: %s\n", SDL_GetError());
+        exit(0);
+    }
 
-    tea_init(&conf);
+    SDL_Window *window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+    if (!window) {
+        fprintf(stderr, "Failed to create SDL2 window: %s\n", SDL_GetError());
+        exit(0);
+    }
+    SDL_Renderer *render = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    poti()->keys = SDL_GetKeyboardState(NULL);
+    poti()->window = window;
+    poti()->render = render;
+
+    if (sbtar_open(&poti()->pkg, "game.pkg"))
+        poti()->is_packed = 1;
+    s_setup_function_ptrs(poti());
+
+    size_t font_data_size;
+    i8 *font_data = poti()->read_file("5x5.ttf", &font_data_size);
+    poti()->init_font(&poti()->default_font, font_data, font_data_size, 10);
+    free(font_data);
+
     mo_init(0);
 
 #if 1
@@ -250,11 +328,14 @@ int poti_init(int flags) {
             lua_rawsetp(L, LUA_REGISTRYINDEX, boot_lua);
         }
     }
+    fprintf(stderr, "Is Packed: %d\n", poti()->is_packed);
     return 1;
 }
 
 int poti_deinit() {
-    tea_deinit();
+    SDL_DestroyWindow(poti()->window);
+    SDL_DestroyRenderer(poti()->render);
+    SDL_Quit();
     mo_deinit();
     lua_close(poti()->L);
     return 1;
@@ -287,11 +368,24 @@ static int _poti_step(lua_State *L) {
 }
 
 int poti_loop() {
-    while (!tea_should_close()) {
-        tea_update_input();
-        tea_begin();
+    char should_close = 0;
+    SDL_Event *event = &poti()->event;
+    double current_time;
+    poti()->last_time = SDL_GetTicks();
+    while (!should_close) {
+        while (SDL_PollEvent(event)) {
+            switch (event->type) {
+                case SDL_QUIT:
+                    should_close = 1;
+                    break;
+            }
+        }
+        current_time = SDL_GetTicks();
+        poti()->delta = (current_time - poti()->last_time) / 1000.f;
+        poti()->last_time = current_time;
         _poti_step(poti()->L);
-        tea_end();
+
+        SDL_RenderPresent(poti()->render);
     }
 
     return 1;
@@ -308,18 +402,16 @@ int luaopen_poti(lua_State *L) {
         {"target", poti_set_target},
         {"point", poti_draw_point},
         {"line", poti_draw_line},
-        {"circle", poti_draw_circ},
-        {"rectangle", poti_draw_rect},
-        {"triangle", poti_draw_tria},
+        {"circle", poti_draw_circle},
+        {"rectangle", poti_draw_rectangle},
+        {"triangle", poti_draw_triangle},
         {"print", poti_print},
         /* Audio */
         {"volume", poti_volume},
         /* Types */
-        {"Point", poti_point},
-        {"Rect", poti_rect},
-        {"Texture", poti_texture},
-        {"Font", poti_font},
-        {"Audio", poti_audio},
+        {"Texture", poti_new_texture},
+        {"Font", poti_new_font},
+        {"Audio", poti_new_audio},
         /* Keyboard */
         {"key_down", poti_key_down},
         {"key_up", poti_key_up},
@@ -337,8 +429,6 @@ int luaopen_poti(lua_State *L) {
     luaL_newlib(L, reg);
 
     struct { char *name; int(*fn)(lua_State*); } libs[] = {
-        {"_Point", luaopen_point},
-        {"_Rect", luaopen_rect},
         {"_Texture", luaopen_texture},
         {"_Font", luaopen_font},
         {"_Audio", luaopen_audio},
@@ -362,199 +452,8 @@ int poti_ver(lua_State *L) {
 }
 
 int poti_delta(lua_State *L) {
-    lua_pushnumber(L, tea_delta());
+    lua_pushnumber(L, poti()->delta);
     return 1;
-}
-
-/*********************************
- * Point
- *********************************/
-
-int luaopen_point(lua_State *L) {
-    luaL_Reg reg[] = {
-        {"__call", poti_point_set},
-        {"x", poti_point_x},
-        {"y", poti_point_y},
-        {NULL, NULL}
-    };
-
-    luaL_newmetatable(L, POINT_CLASS);
-    luaL_setfuncs(L, reg, 0);
-    lua_pushvalue(L, -1);
-    lua_setfield(L, -2, "__index");
-
-    return 1;
-}
-
-int poti_point(lua_State *L) {
-    te_point_t *p = lua_newuserdata(L, sizeof(*p));
-    luaL_setmetatable(L, POINT_CLASS);
-
-    int top = lua_gettop(L) - 1;
-    int i;
-    TEA_TNUM *n = (TEA_TNUM*)p;
-    for (i = 0; i < top; i++) n[i] = luaL_optnumber(L, i+1, 0);
-
-    return 1;
-}
-
-int poti_point_set(lua_State *L) {
-    te_point_t *p = luaL_checkudata(L, 1, POINT_CLASS);
-
-    TEA_TNUM *n = (TEA_TNUM*)p;
-    int top = lua_gettop(L);
-    int i;
-    for (i = 1; i < top; i++) n[i-1] = luaL_optnumber(L, i+1, n[i-1]);
-
-    lua_pushnumber(L, p->x);
-    lua_pushnumber(L, p->y);
-    return 2;
-}
-
-int poti_point_x(lua_State *L) {
-    te_point_t *p = luaL_checkudata(L, 1, POINT_CLASS);
-
-    p->x = luaL_optnumber(L, 2, p->x);
-    lua_pushnumber(L, p->x);
-
-    return 1;
-}
-
-int poti_point_y(lua_State *L) {
-    te_point_t *p = luaL_checkudata(L, 1, POINT_CLASS);
-
-    p->y = luaL_optnumber(L, 2, p->y);
-    lua_pushnumber(L, p->y);
-
-    return 1;
-}
-
-/*********************************
- * Rect
- *********************************/
-
-int luaopen_rect(lua_State *L) {
-    luaL_Reg reg[] = {
-        {"__call", poti_rect_set},
-        {"x", poti_rect_x},
-        {"y", poti_rect_y},
-        {"width", poti_rect_width},
-        {"height", poti_rect_height},
-        {"pos", poti_rect_pos},
-        {"size", poti_rect_size},
-        {NULL, NULL}
-    };
-
-    luaL_newmetatable(L, RECT_CLASS);
-    luaL_setfuncs(L, reg, 0);
-    lua_pushvalue(L, -1);
-    lua_setfield(L, -2, "__index");
-
-    return 1;
-}
-
-int poti_rect(lua_State *L) {
-
-    te_rect_t r;
-    int args = lua_gettop(L);
-    TEA_TNUM *n = (TEA_TNUM*)&r;
-    for (int i = 0; i < args; i++) {
-        n[i] = luaL_checknumber(L, i+1);
-    }
-
-    te_rect_t *rect = lua_newuserdata(L, sizeof(*rect));
-    luaL_setmetatable(L, RECT_CLASS);
-    memcpy(rect, &r, sizeof(*rect));
-
-    return 1;
-}
-
-int poti_rect_set(lua_State *L) {
-    te_rect_t *r = luaL_checkudata(L, 1, RECT_CLASS);
-
-    int args = lua_gettop(L);
-    TEA_TNUM *n = (TEA_TNUM*)r;
-    for (int i = 1; i < args; i++) {
-        n[i-1] = luaL_optnumber(L, i+1, n[i-1]);
-    }
-
-    return 0;
-}
-
-int poti_rect_x(lua_State *L) {
-    te_rect_t *r = luaL_checkudata(L, 1, RECT_CLASS);
-
-    TEA_TNUM x = luaL_optnumber(L, 2, r->x);
-
-    r->x = x;
-    lua_pushnumber(L, r->x);
-
-    return 1;
-}
-
-int poti_rect_y(lua_State *L) {
-    te_rect_t *r = luaL_checkudata(L, 1, RECT_CLASS);
-
-    TEA_TNUM y = luaL_optnumber(L, 2, r->y);
-
-    r->y = y;
-    lua_pushnumber(L, r->y);
-
-    return 1;
-}
-
-int poti_rect_width(lua_State *L) {
-    te_rect_t *r = luaL_checkudata(L, 1, RECT_CLASS);
-
-    TEA_TNUM width = luaL_optnumber(L, 2, r->w);
-
-    r->w = width;
-    lua_pushnumber(L, r->w);
-
-    return 1;
-}
-
-int poti_rect_height(lua_State *L) {
-    te_rect_t *r = luaL_checkudata(L, 1, RECT_CLASS);
-
-    TEA_TNUM height = luaL_optnumber(L, 2, r->h);
-
-    r->h = height;
-    lua_pushnumber(L, r->h);
-
-    return 1;
-}
-
-int poti_rect_pos(lua_State *L) {
-    te_rect_t *r = luaL_checkudata(L, 1, RECT_CLASS);
-
-    TEA_TNUM x, y;
-    x = luaL_optnumber(L, 2, r->x);
-    y = luaL_optnumber(L, 3, r->y);
-
-    r->x = x;
-    r->y = y;
-
-    lua_pushnumber(L, r->x);
-    lua_pushnumber(L, r->y);
-
-    return 2;
-}
-
-int poti_rect_size(lua_State *L) {
-    te_rect_t *r = luaL_checkudata(L, 1, RECT_CLASS);
-
-    TEA_TNUM w, h;
-    w = luaL_optnumber(L, 2, r->w);
-    h = luaL_optnumber(L, 3, r->h);
-
-    r->w = w;
-    r->h = h;
-
-    lua_pushnumber(L, r->w);
-    lua_pushnumber(L, r->h);
-
-    return 2;
 }
 
 /*********************************
@@ -582,34 +481,70 @@ int luaopen_texture(lua_State *L) {
 }
 
 static int _textype_from_string(lua_State *L, const char *name) {
-    int usage = TEA_TEXTURE_STATIC;
-    if (!strcmp(name, "stream")) usage = TEA_TEXTURE_STREAM;
-    else if (!strcmp(name, "target")) usage = TEA_TEXTURE_TARGET;
+    int usage = SDL_TEXTUREACCESS_STATIC;
+    if (!strcmp(name, "stream")) usage = SDL_TEXTUREACCESS_STREAMING;
+    else if (!strcmp(name, "target")) usage = SDL_TEXTUREACCESS_TARGET;
 
     return usage;
 }
 
-static int _texture_from_path(lua_State *L, te_texture_t **tex) {
+static int _texture_from_path(lua_State *L, Texture **tex) {
     size_t size;
     int top = lua_gettop(L)-1;
     const char *path = luaL_checklstring(L, 1, &size);
-    const char *s_usage = "static";
-    if (top > 1 && lua_type(L, top) == LUA_TSTRING)
-        s_usage = luaL_checkstring(L, top);
 
-    int usage = _textype_from_string(L, s_usage);
-    *tex = tea_texture_load(path, usage);
+    int w, h, format, req_format;
+    req_format = STBI_rgb_alpha;
+    // FILE *fp;
+    // fp = fopen(path, "rb");
+    // fseek(fp, 0, SEEK_END);
+    // int sz = ftell(fp);
+    // fseek(fp, 0, SEEK_SET);
+
+    // unsigned char img[sz];
+    // fread(img, 1, sz, fp);
+    // fclose(fp);
+
+    // sbtar_t *tar = &poti()->pkg;
+
+    // sbtar_find(tar, path);
+    // sbtar_header_t header;
+    // sbtar_header(tar, &header);
+    // char img[header.size];
+    // sbtar_data(tar, img, header.size);
+
+    size_t fsize;
+    char *img = poti()->read_file(path, &fsize);
+    if (!img) {
+        fprintf(stderr, "Failed to open image %s\n", path);
+        exit(1);
+    }
+
+    unsigned char *pixels = stbi_load_from_memory(img, fsize, &w, &h, &format, req_format);
+    int pixel_format = SDL_PIXELFORMAT_RGBA32;
+    switch (req_format) {
+        case STBI_rgb: pixel_format = SDL_PIXELFORMAT_RGB888; break;
+        case STBI_rgb_alpha: pixel_format = SDL_PIXELFORMAT_RGBA32; break;
+    }
+
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormatFrom(pixels, w, h, 1, w*req_format, pixel_format);
+
+    *tex = SDL_CreateTextureFromSurface(poti()->render, surf);
+    SDL_FreeSurface(surf);
+    stbi_image_free(pixels);
+    free(img);
+    // *tex = tea_texture_load(path, usage);
     if (!*tex) {
-        fprintf(stderr, "Failed to load texture: %s\n", tea_geterror());
+        fprintf(stderr, "Failed to load texture: %s\n", SDL_GetError());
         exit(0);
     }
 
     return 1;
 }
 
-static int _texture_from_size(lua_State *L, te_texture_t **tex) {
+static int _texture_from_size(lua_State *L, Texture **tex) {
     int top = lua_gettop(L)-1;
-    TEA_TNUM w, h;
+    float w, h;
     w = luaL_checknumber(L, 1);
     h = luaL_checknumber(L, 2);
     
@@ -618,17 +553,18 @@ static int _texture_from_size(lua_State *L, te_texture_t **tex) {
         s_usage = luaL_checkstring(L, top);
 
     int usage = _textype_from_string(L, s_usage);
-    *tex = tea_texture(NULL, w, h, TEA_RGBA, usage);
+    // *tex = tea_texture(NULL, w, h, TEA_RGBA, usage);
+    *tex = SDL_CreateTexture(poti()->render, SDL_PIXELFORMAT_RGBA32, usage, w, h);
     if (!*tex) {
-        fprintf(stderr, "Failed to load texture: %s\n", tea_geterror());
+        fprintf(stderr, "Failed to load texture: %s\n", SDL_GetError());
         exit(0);
     }
 
     return 1;
 }
 
-int poti_texture(lua_State *L) {
-    te_texture_t **tex = lua_newuserdata(L, sizeof(*tex));
+int poti_new_texture(lua_State *L) {
+    Texture **tex = lua_newuserdata(L, sizeof(*tex));
     luaL_setmetatable(L, TEXTURE_CLASS);
 
     switch(lua_type(L, 1)) {
@@ -639,62 +575,122 @@ int poti_texture(lua_State *L) {
     return 1;
 }
 
+static int get_rect_from_table(lua_State *L, int index, SDL_Rect *r) {
+    if (!lua_istable(L, index)) return 0;
+    int parts[4] = {r->x, r->y, r->w, r->h};
+
+    size_t len = lua_rawlen(L, index);
+    int i;
+    for (i = 0; i < len; i++) {
+        lua_pushinteger(L, i+1);
+        lua_gettable(L, index);
+
+        parts[i] = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+    }
+
+    r->x = parts[0];
+    r->y = parts[1];
+    r->w = parts[2];
+    r->h = parts[3];
+
+    return 1;
+}
+
+static int get_point_from_table(lua_State *L, int index, SDL_Point *p) {
+    if (!lua_istable(L, index)) return 0;
+    int parts[2] = { p->x, p->y };
+    size_t len = lua_rawlen(L, index);
+
+    int i;
+    for (i = 0; i < len; i++) {
+        lua_pushinteger(L, i+1);
+        lua_gettable(L, index);
+        parts[i] = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+    }
+
+    p->x = parts[0];
+    p->y = parts[1];
+
+    return 1;
+}
+
+static int get_flip_from_table(lua_State *L, int index, int *flip) {
+    if (!lua_istable(L, index)) return 0;
+    size_t len = lua_rawlen(L, index);
+
+    int i;
+    for (i = 0; i < len; i++) {
+        lua_pushinteger(L, i+1);
+        lua_gettable(L, index);
+        *flip |= (i+1) * lua_toboolean(L, -1);
+        lua_pop(L, 1);
+    }
+
+    return 1;
+}
+
 
 int poti_texture_draw(lua_State *L) {
-    te_texture_t **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    int index = 2;
+    int offset = 0;
     int top = lua_gettop(L);
     // if (top < 2) tea_texture_draw(*tex, NULL, NULL);
+    int w, h;
+    SDL_QueryTexture(*tex, NULL, NULL, &w, &h);
 
-    te_texinfo_t info;
-    tea_texture_info(*tex, &info);
-    
-    te_rect_t *d = luaL_testudata(L, 2, RECT_CLASS);
-    te_rect_t *s = luaL_testudata(L, 3, RECT_CLASS);
+    SDL_Rect s = {0, 0, w, h};
+    get_rect_from_table(L, index++, &s);
+    SDL_Rect d = { 0, 0, s.w, s.h };
+    get_rect_from_table(L, index++, &d);
 
-    if (top > 3) {
-        TEA_TNUM angle = luaL_optnumber(L, 4, 0); 
-        te_point_t ori = TEA_POINT(0, 0);
+    if (index > 3) {
+        float angle = luaL_optnumber(L, index++, 0);
 
-        te_point_t *origin = luaL_testudata(L, 5, POINT_CLASS);
-        if (origin) memcpy(&ori, origin, sizeof(*origin));
-        int flip = luaL_optnumber(L, 6, 0);
+        SDL_Point origin = {0, 0};
+        get_point_from_table(L, index++, &origin);
 
-        tea_texture_draw_ex(*tex, d, s, angle, &ori, flip);
+        int flip = SDL_FLIP_NONE;
+        get_flip_from_table(L, index++, &flip);
+
+        SDL_RenderCopyEx(poti()->render, *tex, &s, &d, angle, &origin, flip);
     } else {
-        tea_texture_draw(*tex, d, s);
+        SDL_RenderCopy(poti()->render, *tex, &s, &d);
     }
 
     return 0;
 }
 
 int poti_texture_width(lua_State *L) {
-    te_texture_t **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
 
-    te_texinfo_t info;
-    tea_texture_info(*tex, &info);
+    int width;
+    SDL_QueryTexture(*tex, NULL, NULL, &width, NULL);
 
-    lua_pushnumber(L, info.size.w);
+    lua_pushnumber(L, width);
     return 1;
 }
 
 int poti_texture_height(lua_State *L) {
-    te_texture_t **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
 
-    te_texinfo_t info;
-    tea_texture_info(*tex, &info);
+    int height;
+    SDL_QueryTexture(*tex, NULL, NULL, &height, NULL);
 
-    lua_pushnumber(L, info.size.h);
+    lua_pushnumber(L, height);
     return 1;
 }
 
 int poti_texture_size(lua_State *L) {
-    te_texture_t **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
 
-    te_texinfo_t info;
-    tea_texture_info(*tex, &info);
+    int width, height;
+    SDL_QueryTexture(*tex, NULL, NULL, &width, &height);
 
-    lua_pushnumber(L, info.size.w);
-    lua_pushnumber(L, info.size.h);
+    lua_pushnumber(L, width);
+    lua_pushnumber(L, height);
     return 2;
 }
 
@@ -721,31 +717,35 @@ int luaopen_font(lua_State *L) {
     return 1;
 }
 
-int poti_font(lua_State *L) {
+int poti_new_font(lua_State *L) {
    const char *path = luaL_checkstring(L, 1); 
    int size = luaL_optnumber(L, 2, 16);
 
-   te_font_t **font = lua_newuserdata(L, sizeof(*font));
+   Font *font = lua_newuserdata(L, sizeof(*font));
    luaL_setmetatable(L, FONT_CLASS);
-   *font = tea_font_load(path, size);
+   
+   size_t buf_size;
+   i8 *font_data = poti()->read_file(path, &buf_size);
+   poti()->init_font(font, font_data, buf_size, size);
+   free(font_data);
 
    return 1;
 }
 
 int poti_font_print(lua_State *L) {
-    te_font_t **font = luaL_checkudata(L, 1, FONT_CLASS);
-    const char *text = luaL_optstring(L, 2, "");
-    TEA_TNUM x, y;
+    // te_font_t **font = luaL_checkudata(L, 1, FONT_CLASS);
+    // const char *text = luaL_optstring(L, 2, "");
+    float x, y;
     x = luaL_optnumber(L, 3, 0);
     y = luaL_optnumber(L, 4, 0);
 
-    tea_font_print(*font, text, x, y);
+    // tea_font_print(*font, text, x, y);
 
     return 0;
 }
 
 int poti_font__gc(lua_State *L) {
-    te_font_t **font = luaL_checkudata(L, 1, FONT_CLASS);
+    // te_font_t **font = luaL_checkudata(L, 1, FONT_CLASS);
     // tea_destroy_font(*font);
     return 0;
 }
@@ -774,18 +774,19 @@ int luaopen_audio(lua_State *L) {
     return 1;
 }
 
-int poti_audio(lua_State *L) {
+int poti_new_audio(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     const char *s_usage = luaL_optstring(L, 1, "stream");
 
-    mo_audio_t **buf = lua_newuserdata(L, sizeof(*buf));
+    Audio **buf = lua_newuserdata(L, sizeof(*buf));
     luaL_setmetatable(L, AUDIO_CLASS);
     int usage = MO_AUDIO_STREAM;
 
     if (!strcmp(s_usage, "static")) usage = MO_AUDIO_STATIC; 
 
-
-    *buf = mo_audio_load(path, usage);
+    size_t size;
+    void *data = poti()->read_file(path, &size);
+    *buf = mo_audio(data, size, usage);
     return 1;
 }
 
@@ -797,31 +798,31 @@ int poti_volume(lua_State *L) {
 }
 
 int poti_audio_play(lua_State *L) {
-    mo_audio_t **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     mo_play(*buf);
     return 0;
 }
 
 int poti_audio_stop(lua_State *L) {
-    mo_audio_t **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     mo_stop(*buf);
     return 0;
 }
 
 int poti_audio_pause(lua_State *L) {
-    mo_audio_t **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     mo_pause(*buf);
     return 0;
 }
 
 int poti_audio_playing(lua_State *L) {
-    mo_audio_t **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     lua_pushboolean(L, mo_is_playing(*buf));
     return 1;
 }
 
 int poti_audio_volume(lua_State *L) {
-    mo_audio_t **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     float volume = luaL_optnumber(L, 2, 0);
     mo_volume(*buf, volume);
     return 0;
@@ -830,124 +831,343 @@ int poti_audio_volume(lua_State *L) {
 int poti_audio_pitch(lua_State *L) { return 0; }
 
 int poti_audio__gc(lua_State *L) {
-    mo_audio_t **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     mo_audio_destroy(*buf); 
     return 0;
 }
-
-
 
 /*********************************
  * Draw
  *********************************/
 
 int poti_clear(lua_State *L) {
-    te_color_t color = TEA_COLOR(0, 0, 0, 255);
-    unsigned char *c = (unsigned char*)&color;
+    color_t color = {0, 0, 0, 255};
     int args = lua_gettop(L);
 
     for (int i = 0; i < args; i++) {
-        c[i] = lua_tonumber(L, i+1);
+        color[i] = lua_tonumber(L, i+1);
     }
-    tea_clear(color);
+    SDL_SetRenderDrawColor(poti()->render, color[0], color[1], color[2], color[3]);
+    SDL_RenderClear(poti()->render);
+    SDL_SetRenderDrawColor(poti()->render, poti()->color[0], poti()->color[1], poti()->color[2], poti()->color[3]);
     return 0;
 }
 
 int poti_mode(lua_State *L) {
-    int mode = luaL_checknumber(L, 1);
-    tea_mode(mode);
+    const char *mode_str = luaL_checkstring(L, 1);
+    int mode = 0;
+    if (!strcmp(mode_str, "line")) mode = 0;
+    else if (!strcmp(mode_str, "fill")) mode = 1;
+    poti()->draw_mode = mode;
     return 0;
 }
 
 int poti_color(lua_State *L) {
     int args = lua_gettop(L);
 
-    unsigned char col[4] = {0, 0, 0, 255};
+    color_t col = {0, 0, 0, 255};
     for (int i = 0; i < args; i++) { 
         col[i] = luaL_checknumber(L, i+1);
     }
-    tea_color(TEA_COLOR(col[0], col[1], col[2], col[3]));
+    SDL_SetRenderDrawColor(poti()->render, col[0], col[1], col[2], col[3]);
+    memcpy(&poti()->color, &col, sizeof(color_t));
 
     return 0;
 }
 
 int poti_set_target(lua_State *L) {
-    te_texture_t **tex = luaL_testudata(L, 1, TEXTURE_CLASS);
-    te_texture_t *t = NULL;
+    Texture **tex = luaL_testudata(L, 1, TEXTURE_CLASS);
+    Texture *t = NULL;
     if (tex) t = *tex;
 
-    tea_set_target(t);
+    SDL_SetRenderTarget(poti()->render, t);
     return 0;
 }
 
 int poti_draw_point(lua_State *L) {
-    TEA_TNUM x, y;
+    float x, y;
     x = luaL_checknumber(L, 1);
     y = luaL_checknumber(L, 2);
 
-    tea_point(x, y);
+    SDL_RenderDrawPointF(poti()->render, x, y);
     return 0;
 }
 
 int poti_draw_line(lua_State *L) {
-    te_point_t p0, p1;
-    p0.x = luaL_checknumber(L, 1);
-    p0.y = luaL_checknumber(L, 2);
+    float p[4];
 
-    p1.x = luaL_checknumber(L, 3);
-    p1.y = luaL_checknumber(L, 4);
+    for (int i = 0; i < 4; i++) {
+        p[i] = luaL_checknumber(L, i+1);
+    }
 
-    tea_line(p0.x, p0.y, p1.x, p1.y);
+    SDL_RenderDrawLineF(poti()->render, p[0], p[1], p[2], p[3]);
     return 0;
 }
 
-int poti_draw_circ(lua_State *L) {
+typedef void(*DrawCircle)(float, float, float, int);
 
-    TEA_TNUM x, y;
+static void circle_fill_segment(int xc, int yc, int x, int y) {
+    SDL_RenderDrawLine(poti()->render, xc + x, yc + y, xc - x, yc + y);
+    SDL_RenderDrawLine(poti()->render, xc + x, yc - y, xc - x, yc - y);
+    SDL_RenderDrawLine(poti()->render, xc + y, yc + x, xc - y, yc + x);
+    SDL_RenderDrawLine(poti()->render, xc + y, yc - x, xc - y, yc - x);
+}
+
+static void circle_line_segment(int xc, int yc, int x, int y) {
+    SDL_RenderDrawPoint(poti()->render, xc + x, yc + y);
+    SDL_RenderDrawPoint(poti()->render, xc - x, yc + y);
+
+    SDL_RenderDrawPoint(poti()->render, xc + x, yc - y);
+    SDL_RenderDrawPoint(poti()->render, xc - x, yc - y);
+
+    SDL_RenderDrawPoint(poti()->render, xc + y, yc + x);
+    SDL_RenderDrawPoint(poti()->render, xc - y, yc + x);
+
+    SDL_RenderDrawPoint(poti()->render, xc + y, yc - x);
+    SDL_RenderDrawPoint(poti()->render, xc - y, yc - x);
+}
+
+static void draw_filled_circle(float xc, float yc, float radius, int segments) {
+    int x = 0, y = radius;
+    int d = 3 - 2 * radius;
+    circle_fill_segment(xc, yc, x, y);
+
+    while (y >= x) {
+        x++;
+        if (d > 0) {
+            y--;
+            d = d + 4 * (x - y) + 10;
+        } else
+            d = d + 4 * x + 6;
+        circle_fill_segment(xc, yc, x, y);
+    }
+}
+
+static void draw_lined_circle(float xc, float yc, float radius, int segments) {
+    int x = 0, y = radius;
+    int d = 3 - (2 * radius);
+    circle_line_segment(xc, yc, x, y);
+
+    while (y >= x) {
+        x++;
+        if (d > 0) {
+            y--;
+            d = d + 4 * (x - y) + 10;
+        } else
+            d = d + 4 * x + 6;
+        circle_line_segment(xc, yc, x, y);
+    }
+}
+
+int poti_draw_circle(lua_State *L) {
+
+    float x, y;
     x = luaL_checknumber(L, 1);
     y = luaL_checknumber(L, 2);
 
-    TEA_TNUM radius = luaL_checknumber(L, 3);
+    float radius = luaL_checknumber(L, 3);
 
-    tea_circle(x, y, radius);
+    float segments = luaL_optnumber(L, 4, 32);
+
+    DrawCircle fn[2] = {
+        draw_lined_circle,
+        draw_filled_circle
+    };
+
+    fn[poti()->draw_mode](x, y, radius, segments);
 
     return 0;
 }
 
-int poti_draw_rect(lua_State *L) {
+typedef void(*DrawRect)(SDL_Rect*);
 
-    te_rect_t r = {0, 0, 0, 0};
+static void draw_filled_rect(SDL_Rect *r) {
+    SDL_RenderFillRect(poti()->render, r);
+}
+
+static void draw_lined_rect(SDL_Rect *r) {
+    SDL_RenderDrawRect(poti()->render, r);
+}
+
+int poti_draw_rectangle(lua_State *L) {
+
+    SDL_Rect r = {0, 0, 0, 0};
 
     r.x = luaL_checknumber(L, 1);
     r.y = luaL_checknumber(L, 2);
     r.w = luaL_checknumber(L, 3);
     r.h = luaL_checknumber(L, 4);
 
-    tea_rect(r.x, r.y, r.w, r.h);
+    DrawRect fn[2] = {
+        draw_lined_rect,
+        draw_filled_rect
+    };
+
+    fn[poti()->draw_mode](&r);
     
     return 0;
 }
 
-int poti_draw_tria(lua_State *L) {
+typedef void(*DrawTriangle)(float, float, float, float, float, float);
 
-    TEA_TNUM points[6];
+static void bottom_flat_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
+    float invslope1 = (x1 - x0) / (y1 - y0);
+    float invslope2 = (x2 - x0) / (y2 - y0);
+
+    float curX1 = x0;
+    float curX2 = x0;
+
+    for (int scanlineY = y0; scanlineY <= y1; scanlineY++) {
+        SDL_RenderDrawLineF(poti()->render, curX1, scanlineY, curX2, scanlineY);
+        curX1 += invslope1;
+        curX2 += invslope2;
+    } 
+}
+
+static void top_flat_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
+    float invslope1 = (x2 - x0) / (y2 - y0);
+    float invslope2 = (x2 - x1) / (y2 - y1);
+
+    float curX1 = x2;
+    float curX2 = x2;
+
+    for (int scanlineY = y2; scanlineY > y0; scanlineY--) {
+        SDL_RenderDrawLineF(poti()->render, curX1, scanlineY, curX2, scanlineY);
+        curX1 -= invslope1;
+        curX2 -= invslope2;
+    }
+}
+
+static void swap_pos(float *x0, float *y0, float *x1, float *y1) {
+    float aux_x, aux_y;
+    aux_x = *x0;
+    aux_y = *y0;
+    *x0 = *x1;
+    *y0 = *y1;
+    *x1 = aux_x;
+    *y1 = aux_y;
+}
+
+static void draw_filled_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
+    
+    struct {
+        float x0, y0;
+        float x1, y1;
+        float x2, y2;
+    } verts;
+    verts.x0 = x0; verts.y0 = y0;
+    verts.x1 = x1; verts.y1 = y1;
+    verts.x2 = x2; verts.y2 = y2;
+
+    if (y1 < y0)
+        swap_pos(&x1, &y1, &x0, &y0);
+    if (y2 < y0)
+        swap_pos(&x2, &y2, &x0, &y0);
+    if (y2 < y1)
+        swap_pos(&x2, &y2, &x1, &y1);
+
+    if (y1 == y2)
+        bottom_flat_triangle(x0, y0, x1, y1, x2, y2);
+    else if (y0 == y1)
+        top_flat_triangle(x0, y0, x1, y1, x2, y2);
+    else {
+        float x3, y3;
+        x3 = x0 + ((y1 - y0) / (y2 - y0)) * (x2 - x0);
+        y3 = y1;
+        bottom_flat_triangle(x0, y0, x1, y1, x3, y3);
+        top_flat_triangle(x1, y1, x3, y3, x2, y2);
+    }
+}
+
+static void draw_lined_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
+    SDL_RenderDrawLine(poti()->render, x0, y0, x1, y1);
+    SDL_RenderDrawLine(poti()->render, x1, y1, x2, y2);
+    SDL_RenderDrawLine(poti()->render, x2, y2, x0, y0);
+}
+
+int poti_draw_triangle(lua_State *L) {
+
+    float points[6];
 
     for (int i = 0; i < 6; i++) {
         points[i] = luaL_checknumber(L, i+1);
     }
 
-        tea_triangle(points[0], points[1], points[2], points[3], points[4], points[5]);
+    const DrawTriangle fn[] = {
+        draw_lined_triangle,
+        draw_filled_triangle
+    };
+
+    fn[poti()->draw_mode](points[0], points[1], points[2], points[3], points[4], points[5]);
 
     return 0;
 }
 
-int poti_print(lua_State *L) {
+static void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SDL_Rect *rect, int width) {
+    if (c == '\n') {
+        *x = 0;
+        *y += font->height;
+        return;
+    }
 
-    const char *text = luaL_checkstring(L, 1);
-    TEA_TNUM x, y;
-    x = luaL_optnumber(L, 2, 0);
-    y = luaL_optnumber(L, 3, 0);
-    tea_print(text, x, y);
+    if (c == '\t') {
+        *x += font->c[c].bw * 2;
+        return;
+    }
+    if (width != 0 && *x + (font->c[c].bl) > width) {
+        *x = 0;
+        *y += font->height;
+    }
+
+    float x2 = *x + font->c[c].bl;
+    float y2 = *y + font->c[c].bt;
+    float w = font->c[c].bw;
+    float h = font->c[c].bh;
+
+    float s0 = font->c[c].tx;
+    float t0 = 0;
+    int s1 = font->c[c].bw;
+    int t1 = font->c[c].bh;
+
+    *x += font->c[c].ax;
+    *y += font->c[c].ay;
+
+    if (out_pos) {
+        out_pos->x = x2;
+        out_pos->y = y2;
+    }
+    if (rect) *rect = (SDL_Rect){s0, t0, s1, t1};
+}
+
+int poti_print(lua_State *L) {
+    int index = 1;
+    Font *font = luaL_testudata(L, index++, FONT_CLASS);
+    if (!font) {
+        font = &poti()->default_font;
+        --index;
+    }
+
+    const i8 *text = luaL_checkstring(L, index++);
+    float x, y;
+    x = luaL_optnumber(L, index++, 0);
+    y = luaL_optnumber(L, index++, 0);
+
+    int len = strlen(text);
+    u8 *p = (u8*)text;
+
+    float x0 = 0, y0 = 0;
+    while (*p) {
+        int codepoint;
+        p = poti()->utf8_codepoint(p, &codepoint);
+        SDL_Rect src, dest;
+        SDL_Point pos;
+        s_char_rect(font, codepoint, &x0, &y0, &pos, &src, 0);
+        dest.x = x + pos.x;
+        dest.y = y + pos.y;
+        dest.w = src.w;
+        dest.h = src.h;
+        SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
+    }
 
     return 0;
 }
@@ -987,8 +1207,8 @@ int luaopen_mouse(lua_State *L) {
 int poti_key_down(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
 
-    int code = tea_key_from_name(key);
-    lua_pushboolean(L, tea_key_down(code));
+    int code = SDL_GetScancodeFromName(key);
+    lua_pushboolean(L, poti()->keys[code]);
     
     return 1;
 }
@@ -996,8 +1216,8 @@ int poti_key_down(lua_State *L) {
 int poti_key_up(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
 
-    int code = tea_key_from_name(key);
-    lua_pushboolean(L, tea_key_up(code));
+    int code = SDL_GetScancodeFromName(key);
+    lua_pushboolean(L, !poti()->keys[code]);
     
     return 1;
 }
@@ -1005,8 +1225,8 @@ int poti_key_up(lua_State *L) {
 int poti_key_pressed(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
 
-    int code = tea_key_from_name(key);
-    lua_pushboolean(L, tea_key_pressed(code));
+    int code = SDL_GetScancodeFromName(key);
+    lua_pushboolean(L, poti()->keys[code]);
     
     return 1;
 }
@@ -1014,41 +1234,220 @@ int poti_key_pressed(lua_State *L) {
 int poti_key_released(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
 
-    int code = tea_key_from_name(key);
-    lua_pushboolean(L, tea_key_released(code));
+    int code = SDL_GetScancodeFromName(key);
+    lua_pushboolean(L, !poti()->keys[code]);
     
     return 1;
 }
 
 int poti_mouse_pos(lua_State *L) {
-    return 0;
+    int x, y;
+    SDL_GetMouseState(&x, &y);
+
+    lua_pushnumber(L, x);
+    lua_pushnumber(L, y);
+    return 2;
+}
+
+static int mouse_down(int btn) {
+    return SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(btn);
 }
 
 int poti_mouse_down(lua_State *L) {
-    int button = luaL_checknumber(L, 1) - 1;
-    lua_pushboolean(L, tea_mouse_down(button));
+    int button = luaL_checknumber(L, 1);
+
+    lua_pushboolean(L, mouse_down(button));
     
     return 1;
 }
 
 int poti_mouse_up(lua_State *L) {
     int button = luaL_checknumber(L, 1) - 1;
-    lua_pushboolean(L, tea_mouse_up(button));
+    lua_pushboolean(L, !mouse_down(button));
     
     return 1;
 }
 
 int poti_mouse_pressed(lua_State *L) {
     int button = luaL_checknumber(L, 1) - 1;
-    lua_pushboolean(L, tea_mouse_pressed(button));
+    lua_pushboolean(L, mouse_down(button));
     
     return 1;
 }
 
 int poti_mouse_released(lua_State *L) {
     int button = luaL_checknumber(L, 1) - 1;
-    lua_pushboolean(L, tea_mouse_released(button));
+    lua_pushboolean(L, !mouse_down(button));
     
+    return 1;
+}
+
+static i8* s_read_file(const char *filename, size_t *size) {
+    FILE *fp;
+    fp = fopen(filename, "rb");
+    if (!fp) return NULL;
+    fseek(fp, 0, SEEK_END);
+    int sz = ftell(fp);
+    if (size) *size = sz;
+    fseek(fp, 0, SEEK_SET);
+    char *str = malloc(sz);
+    fread(str, 1, sz, fp);
+    fclose(fp);
+
+    return str;
+}
+
+static i8* s_read_file_packed(const char *filename, size_t *size) {
+    sbtar_t *tar = &poti()->pkg;
+    if (!sbtar_find(tar, filename)) return;
+    sbtar_header_t h;
+    sbtar_header(tar, &h);
+    char *str = malloc(h.size);
+    if (size) *size = h.size;
+    sbtar_data(tar, str, h.size);
+
+    return str;
+}
+
+#define MAX_UNICODE 0x10FFFF
+
+static u8* s_utf8_codepoint(u8 *p, i32 *codepoint) {
+    u8 *n;
+    u8 c = *p;
+    if (c < 0x80) {
+        *codepoint = c;
+        n = p + 1;
+        return n;
+    }
+
+    switch (c & 0xf0) {
+        case 0xf0: {
+            *codepoint = ((p[0] & 0x07) << 18) | ((p[1] & 0x3f) << 12) | ((p[2] & 0x3f) << 6) | ((p[3] & 0x3f));
+            n = p + 4;
+            break;
+        }
+        case 0xe0: {
+            *codepoint = ((p[0] & 0x0f) << 12) | ((p[1] & 0x3f) << 6) | ((p[2] & 0x3f));
+            n = p + 3;
+            break;
+        }
+        case 0xc0:
+        case 0xd0: {
+            *codepoint = ((p[0] & 0x1f) << 6) | ((p[1] & 0x3f));
+            n = p + 2;
+            break;
+        }
+        default:
+        {
+            *codepoint = -1;
+            n = n + 1;
+        }
+    }
+    if (*codepoint > MAX_UNICODE) *codepoint = -1;
+    return n;
+}
+
+static int s_init_font(Font *font, const void *data, size_t buf_size, int font_size) {
+    font->data = malloc(buf_size);
+    if (!data) {
+        fprintf(stderr, "Failed to alloc Font data\n");
+        exit(EXIT_FAILURE);
+    }
+    memcpy(font->data, data, buf_size);
+
+    if (!stbtt_InitFont(&font->info, font->data, 0)) {
+        fprintf(stderr, "Failed to init stbtt_info\n");
+        exit(EXIT_FAILURE);
+    }
+
+    int ascent, descent, line_gap;
+    font->size = font_size;
+    float fsize = font_size;
+    font->scale = stbtt_ScaleForMappingEmToPixels(&font->info, fsize);
+    stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &line_gap);
+    font->baseline = ascent * font->scale;
+
+    int tw = 0, th = 0;
+
+    for (int i = 0; i < 256; i++) {
+        int ax, bl;
+        int x0, y0, x1, y1;
+        int w, h;
+
+        stbtt_GetCodepointHMetrics(&font->info, i, &ax, &bl);
+        stbtt_GetCodepointBitmapBox(&font->info, i, font->scale, font->scale, &x0, &y0, &x1, &y1);
+
+        w = x1 - x0;
+        h = y1 - y0;
+
+        font->c[i].ax = ax * font->scale;
+        font->c[i].ay = 0;
+        font->c[i].bl = bl * font->scale;
+        font->c[i].bw = w;
+        font->c[i].bh = h;
+        font->c[i].bt = font->baseline + y0;
+
+        tw += w;
+        th = th > h ? th : h;
+    }
+
+    font->height = th;
+
+    u32 bitmap[tw * th];
+    memset(bitmap, 0, tw * th * 4);
+    int x = 0;
+    SDL_PixelFormat *fmt = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA32);
+    for (int i = 0; i < 256; i++) {
+        int ww = font->c[i].bw;
+        int hh = font->c[i].bh;
+        int ssize = ww * hh;
+        int ox, oy;
+
+        unsigned char *bmp = stbtt_GetCodepointBitmap(&font->info, 0, font->scale, i, NULL, NULL, &ox, &oy);
+        // u32 pixels[ssize];
+        int xx, yy;
+        xx = yy = 0;
+        for (int j = 0; j < ssize; j++) {
+            // int ii = j / 4;
+            xx = (j % ww) + x;
+            if (j != 0 && j % ww == 0) {
+                yy += tw;
+            }
+            bitmap[xx + yy] = SDL_MapRGBA(fmt, 255, 255, 255, bmp[j]);
+        }
+        stbtt_FreeBitmap(bmp, font->info.userdata);
+        
+        font->c[i].tx = x;
+
+        x += font->c[i].bw;
+    }
+    SDL_FreeFormat(fmt);
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormatFrom(bitmap, tw, th, 1, tw * 4, SDL_PIXELFORMAT_RGBA32);
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(poti()->render, surf);
+    SDL_FreeSurface(surf);
+    font->tex = tex;
+}
+
+static Font* s_load_font(const i8 *filename, i32 font_size) {
+    Font *font = malloc(sizeof(*font));
+    if (!font) {
+        fprintf(stderr, "Failed to alloc memory for font\n");
+        exit(EXIT_FAILURE);
+    }
+    size_t buf_size;
+    i8 *buf = poti()->read_file(filename, &buf_size);
+    poti()->init_font(font, buf, buf_size, font_size);
+    free(buf);
+    return font;
+}
+
+int s_setup_function_ptrs(struct Context *ctx) {
+    ctx->read_file = s_read_file;
+    if (poti()->is_packed)
+        ctx->read_file = s_read_file_packed;
+    ctx->init_font = s_init_font;
+    ctx->utf8_codepoint = s_utf8_codepoint;
+
     return 1;
 }
 

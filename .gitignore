@@ -1,6 +1,11 @@
 poti
-%.o
+*.o
 *.json
 *.sublime-*
 .clangd
 *.png
+.vscode
+*.pkg
+*.wav
+*.png
+*.ttf

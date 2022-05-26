@@ -8,10 +8,9 @@ LUA_SRC = $(wildcard $(LUA_DIR)/*.c)
 LUA_SRC := $(filter-out $(LUA_DIR)/lua.c,$(LUA_SRC))
 LUA_SRC := $(filter-out $(LUA_DIR)/luac.c,$(LUA_SRC))
 
-TEA_SRC = $(TEA_DIR)/tea.c
 MOCHA_SRC = $(MOCHA_DIR)/mocha.c
 
-SRC = poti.c $(LUA_SRC) $(TEA_SRC) $(MOCHA_SRC)
+SRC = poti.c $(LUA_SRC) $(MOCHA_SRC)
 INCL = -Iinclude/ -Iexternal/ -I$(LUA_DIR) -I$(TEA_DIR) -I$(TEA_DIR)/external -I$(MOCHA_DIR) -I$(MOCHA_DIR)/external
 OUT = poti
 
