@@ -1,4 +1,5 @@
 local x = 0
+local y = 0
 local tex = nil
 local rect
 local ang = 0
@@ -13,11 +14,13 @@ local frames = {
 
 function poti.load()
     -- tex = poti.Texture("img.jpg")
-    joy = poti.Joystick(0)
+    joy = poti.Gamepad(0)
     canvas = poti.Texture(160, 95, "target")
     -- audio = poti.Audio("som.wav")
     -- font = poti.Font("pixelart.ttf", 8)
     print(font)
+    joy:rumble(2500, 5000, 5000)
+    -- print("is gamepad", poti.is_gamepad(0))
 end
 
 function poti.update(dt)
@@ -33,30 +36,20 @@ function poti.update(dt)
         frame = frame + 1
         if frame > #frames then frame = 1 end
     end
-    if joy:button(0) then
-        print("ok")
+    x = x + (joy:axis("leftx") / 32767)
+    y = y + (joy:axis("lefty") / 32767)
+    if joy:button("a") then
+        print("A")
+    elseif joy:button("b") then
+        print("B")
     end
 end
 
 function poti.draw()
     poti.clear()
-    
-    -- tex:draw()
-    -- poti.target(canvas)
-    -- poti.mode("fill")
-    -- poti.color(255, 255, 255)
-    -- -- poti.rectangle(x, 0, 32, 32)
-    -- poti.rectangle(x, 0, 32, 32)
-    -- -- poti.mode("line")
-    -- poti.circle(x, 32, 8)
+    poti.color(255, 255, 255)
+    poti.print("testando pra ver se vai")
+    poti.print(joy:name(), 0, 12)
 
-    -- local mx, my = poti.mouse_pos()
-    -- mx = mx / 4
-    -- my = my / 4
-    -- poti.triangle(mx, my, x-16, 80, x+16, 80-16)
-    -- local str = string.format("Pos: %f %f", mx, my)
-    -- poti.print(str)
-    -- poti.target()
-
-    -- canvas:draw(nil, {0, 0, 640, 380})
+    poti.circle(x, y, 10)
 end

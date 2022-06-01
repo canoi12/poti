@@ -196,13 +196,32 @@ static int luaopen_gamepad(lua_State *L);
 static int poti_ver(lua_State *L);
 static int poti_delta(lua_State *L);
 
-/* Filesystem */
+/*=================================*
+ *              Audio              *
+ *=================================*/
+static int poti_volume(lua_State *L);
+static int poti_new_audio(lua_State *L);
+static int poti_audio_play(lua_State *L);
+static int poti_audio_stop(lua_State *L);
+static int poti_audio_pause(lua_State *L);
+static int poti_audio_playing(lua_State *L);
+static int poti_audio_volume(lua_State *L);
+static int poti_audio_pitch(lua_State *L);
+static int poti_audio__gc(lua_State *L);
+
+/*=================================*
+ *           Filesystem            *
+ *=================================*/
 static int poti_file(lua_State *L);
 static int poti_file_read(lua_State *L);
 static int poti_file_write(lua_State *L);
 static int poti_file_seek(lua_State *L);
 static int poti_file_tell(lua_State *L);
 static int poti_list_folder(lua_State *L);
+
+/*=================================*
+ *            Graphics             *
+ *=================================*/
 
 /* Texture */
 static int poti_new_texture(lua_State *L);
@@ -217,16 +236,6 @@ static int poti_new_font(lua_State *L);
 static int poti_font_print(lua_State *L);
 static int poti_font__gc(lua_State *L);
 
-/* Audio */
-static int poti_volume(lua_State *L);
-static int poti_new_audio(lua_State *L);
-static int poti_audio_play(lua_State *L);
-static int poti_audio_stop(lua_State *L);
-static int poti_audio_pause(lua_State *L);
-static int poti_audio_playing(lua_State *L);
-static int poti_audio_volume(lua_State *L);
-static int poti_audio_pitch(lua_State *L);
-static int poti_audio__gc(lua_State *L);
 
 /* Draw */
 static int poti_clear(lua_State *L);
@@ -240,31 +249,60 @@ static int poti_draw_circle(lua_State *L);
 static int poti_draw_triangle(lua_State *L);
 static int poti_print(lua_State *L);
 
-/* Input */
+/*=================================*
+ *              Input              *
+ *=================================*/
+
+/* Keyboard */
 static int poti_key_down(lua_State *L);
 static int poti_key_up(lua_State *L);
 static int poti_key_pressed(lua_State *L);
 static int poti_key_released(lua_State *L);
 
+/* Mouse */
 static int poti_mouse_pos(lua_State *L);
 static int poti_mouse_down(lua_State *L);
 static int poti_mouse_up(lua_State *L);
 static int poti_mouse_pressed(lua_State *L);
 static int poti_mouse_released(lua_State *L);
 
+/* Joystick */
 static int poti_joystick(lua_State* L);
-static int poti_jpad_button(lua_State *L);
-static int poti_jpad_axis(lua_State *L);
-static int poti_jpad_hat(lua_State *L);
+static int poti_num_joysticks(lua_State *L);
+// static int poti_joystick_opened(lua_State *L);
 
-static int poti_gamepad(lua_State* L);
-static int poti_gpad_button(lua_State *L);
-static int poti_gpad_axis(lua_State *L);
-static int poti_gpad_hat(lua_State *L);
-// poti.key_down("a")
-// poti.mouse_down(1)
-// poti.jpad_down("a") poti.jpad_down("d_down")
-//
+static int poti_joystick_name(lua_State *L);
+static int poti_joystick_vendor(lua_State *L);
+static int poti_joystick_product(lua_State *L);
+static int poti_joystick_product_version(lua_State *L);
+static int poti_joystick_type(lua_State *L);
+static int poti_joystick_num_axes(lua_State *L);
+static int poti_joystick_num_balls(lua_State *L);
+static int poti_joystick_num_hats(lua_State *L);
+static int poti_joystick_num_buttons(lua_State *L);
+static int poti_joystick_button(lua_State *L);
+static int poti_joystick_axis(lua_State *L);
+static int poti_joystick_hat(lua_State *L);
+static int poti_joystick_ball(lua_State *L);
+static int poti_joystick_rumble(lua_State *L);
+static int poti_joystick_powerlevel(lua_State *L);
+static int poti_joystick_close(lua_State *L);
+static int poti_joystick__gc(lua_State *L);
+
+/* Game Controller */
+static int poti_gamepad(lua_State *L);
+static int poti_is_gamepad(lua_State *L);
+static int poti_gamepad_name(lua_State *L);
+static int poti_gamepad_vendor(lua_State *L);
+static int poti_gamepad_product(lua_State *L);
+static int poti_gamepad_product_version(lua_State *L);
+
+static int poti_gamepad_axis(lua_State *L);
+static int poti_gamepad_button(lua_State *L);
+static int poti_gamepad_rumble(lua_State *L);
+
+static int poti_gamepad_close(lua_State *L);
+static int poti_gamepad__gc(lua_State *L);
 
 static int s_setup_function_ptrs(struct Context *ctx);
 
@@ -448,6 +486,8 @@ int luaopen_poti(lua_State *L) {
         {"Font", poti_new_font},
         {"Audio", poti_new_audio},
         {"Joystick", poti_joystick},
+        {"Gamepad", poti_gamepad},
+        // {"Gamepad", poti_gamepad},
         /* Keyboard */
         {"key_down", poti_key_down},
         {"key_up", poti_key_up},
@@ -459,6 +499,10 @@ int luaopen_poti(lua_State *L) {
         {"mouse_up", poti_mouse_up},
         {"mouse_pressed", poti_mouse_pressed},
         {"mouse_released", poti_mouse_released},
+        /* Joystick */
+        {"num_joysticks", poti_num_joysticks},
+        /* Gamepad */
+        {"is_gamepad", poti_is_gamepad},
         {NULL, NULL}
     };
 
@@ -469,6 +513,7 @@ int luaopen_poti(lua_State *L) {
         {"_Font", luaopen_font},
         {"_Audio", luaopen_audio},
         {"_Joystick", luaopen_joystick},
+        {"_Gamepad", luaopen_gamepad},
         {NULL, NULL}
     };
 
@@ -1091,16 +1136,6 @@ static void swap_pos(float *x0, float *y0, float *x1, float *y1) {
 }
 
 static void draw_filled_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
-    
-    struct {
-        float x0, y0;
-        float x1, y1;
-        float x2, y2;
-    } verts;
-    verts.x0 = x0; verts.y0 = y0;
-    verts.x1 = x1; verts.y1 = y1;
-    verts.x2 = x2; verts.y2 = y2;
-
     if (y1 < y0)
         swap_pos(&x1, &y1, &x0, &y0);
     if (y2 < y0)
@@ -1247,10 +1282,49 @@ int luaopen_mouse(lua_State *L) {
 
 int luaopen_joystick(lua_State *L) {
     luaL_Reg reg[] = {
-        {"button", poti_jpad_button},
+        {"num_axes", poti_joystick_num_axes},
+        {"num_hats", poti_joystick_num_hats},
+        {"num_balls", poti_joystick_num_balls},
+        {"num_buttons", poti_joystick_num_buttons},
+        {"axis", poti_joystick_axis},
+        {"button", poti_joystick_button},
+        {"hat", poti_joystick_hat},
+        {"ball", poti_joystick_ball},
+        {"name", poti_joystick_name},
+        {"vendor", poti_joystick_vendor},
+        {"product", poti_joystick_product},
+        {"product_version", poti_joystick_product_version},
+        {"type", poti_joystick_type},
+        {"rumble", poti_joystick_rumble},
+        {"powerlevel", poti_joystick_powerlevel},
+        {"__gc", poti_joystick__gc},
         {NULL, NULL}
     };
-    luaL_newlib(L, reg);
+    luaL_newmetatable(L, JOYSTICK_CLASS);
+    luaL_setfuncs(L, reg, 0);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "__index");
+
+    return 1;
+}
+
+int luaopen_gamepad(lua_State *L) {
+    luaL_Reg reg[] = {
+        {"axis", poti_gamepad_axis},
+        {"button", poti_gamepad_button},
+        {"name", poti_gamepad_name},
+        {"vendor", poti_gamepad_vendor},
+        {"product", poti_gamepad_product},
+        {"product_version", poti_gamepad_product_version},
+        {"rumble", poti_gamepad_rumble},
+        // {"powerlevel", poti_gamepad_powerlevel},
+        {"__gc", poti_gamepad__gc},
+        {NULL, NULL}
+    };
+    luaL_newmetatable(L, GAMEPAD_CLASS);
+    luaL_setfuncs(L, reg, 0);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "__index");
 
     return 1;
 }
@@ -1333,17 +1407,113 @@ int poti_mouse_released(lua_State *L) {
     return 1;
 }
 
+/* Joystick */
 int poti_joystick(lua_State* L) {
     Joystick** j = lua_newuserdata(L, sizeof(*j));
     luaL_setmetatable(L, JOYSTICK_CLASS);
-    printf("Joystick count: %d\n", SDL_NumJoysticks());
-    int number = luaL_optnumber(L, 1, 0);
+    int number = luaL_checknumber(L, 1);
     *j = SDL_JoystickOpen(number);
 
     return 1;
 }
 
-int poti_jpad_button(lua_State* L) {
+int poti_num_joysticks(lua_State *L) {
+    lua_pushnumber(L, SDL_NumJoysticks());
+    return 1;
+}
+
+int poti_joystick_name(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushstring(L, SDL_JoystickName(*j));
+    return 1;
+}
+
+int poti_joystick_vendor(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushnumber(L, SDL_JoystickGetVendor(*j));
+    return 1;
+}
+
+int poti_joystick_product(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushnumber(L, SDL_JoystickGetProduct(*j));
+    return 1;
+}
+
+int poti_joystick_product_version(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushnumber(L, SDL_JoystickGetProductVersion(*j));
+    return 1;
+}
+
+const char *joy_types[] = {
+    [SDL_JOYSTICK_TYPE_UNKNOWN] = "unknown",
+    [SDL_JOYSTICK_TYPE_GAMECONTROLLER] = "gamepad",
+    [SDL_JOYSTICK_TYPE_WHEEL] = "wheel",
+    [SDL_JOYSTICK_TYPE_ARCADE_STICK] = "arcade_stick",
+    [SDL_JOYSTICK_TYPE_FLIGHT_STICK] = "flight_stick",
+    [SDL_JOYSTICK_TYPE_DANCE_PAD] = "dance_pad",
+    [SDL_JOYSTICK_TYPE_GUITAR] = "guitar",
+    [SDL_JOYSTICK_TYPE_DRUM_KIT] = "drum_kit",
+    [SDL_JOYSTICK_TYPE_ARCADE_PAD] = "arcade_pad",
+    [SDL_JOYSTICK_TYPE_THROTTLE] = "throttle",
+};
+
+int poti_joystick_type(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushstring(L, joy_types[SDL_JoystickGetType(*j)]);
+    return 1;
+}
+
+
+int poti_joystick_num_axes(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushnumber(L, SDL_JoystickNumAxes(*j));
+    return 1;
+}
+
+int poti_joystick_num_balls(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushnumber(L, SDL_JoystickNumBalls(*j));
+    return 1;
+}
+
+int poti_joystick_num_hats(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushnumber(L, SDL_JoystickNumHats(*j));
+    return 1;
+}
+
+int poti_joystick_num_buttons(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushnumber(L, SDL_JoystickNumButtons(*j));
+    return 1;
+}
+int poti_joystick_axis(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    int axis = luaL_checknumber(L, 2);
+    lua_pushnumber(L, SDL_JoystickGetAxis(*j, axis));
+    return 1;
+}
+
+int poti_joystick_ball(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    int ball = luaL_checknumber(L, 2);
+    int dx, dy;
+    SDL_JoystickGetBall(*j, ball, &dx, &dy);
+    lua_pushnumber(L, dx);
+    lua_pushnumber(L, dy);
+    return 2;
+}
+
+int poti_joystick_hat(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    int hat = luaL_checknumber(L, 2);
+    lua_pushnumber(L, SDL_JoystickGetHat(*j, hat));
+    return 1;
+}
+
+int poti_joystick_button(lua_State* L) {
     Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     int button = luaL_checknumber(L, 2);
     int res = SDL_JoystickGetButton(*j, button);
@@ -1352,19 +1522,118 @@ int poti_jpad_button(lua_State* L) {
     return 1;
 }
 
-int poti_jpad_up(lua_State* L) {
-    Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
-    int button = luaL_checknumber(L, 2);
-    int res = !SDL_JoystickGetButton(*j, button);
-
-    lua_pushboolean(L, res);
+int poti_joystick_rumble(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    u16 low = luaL_checknumber(L, 2);
+    u16 high = luaL_checknumber(L, 3);
+    u32 freq = luaL_optnumber(L, 4, 100);
+    lua_pushboolean(L, SDL_JoystickRumble(*j, low, high, freq) == 0);
     return 1;
+}
+
+const char *joy_powerlevels[] = {
+    "unknown", "empty", "low", "medium", "high", "full", "wired"
+};
+
+int poti_joystick_powerlevel(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    lua_pushstring(L, joy_powerlevels[SDL_JoystickCurrentPowerLevel(*j) + 1]);
+    return 1;
+}
+
+int poti_joystick_close(lua_State *L) {
+    Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    SDL_JoystickClose(*j);
+    return 0;
 }
 
 int poti_joystick__gc(lua_State* L) {
     Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     SDL_JoystickClose(*j);
+    return 0;
+}
 
+/* Game Controller */
+int poti_gamepad(lua_State *L) {
+    GameController **g = lua_newuserdata(L, sizeof(*g));
+    *g = SDL_GameControllerOpen(luaL_checknumber(L, 1));
+    luaL_setmetatable(L, GAMEPAD_CLASS);
+    return 1;
+}
+
+int poti_is_gamepad(lua_State *L) {
+    lua_pushboolean(L, SDL_IsGameController(luaL_checknumber(L, 1)));
+    return 1;
+}
+
+int poti_gamepad_name(lua_State *L) {
+    GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    lua_pushstring(L, SDL_GameControllerName(*g));
+    return 1;
+}
+
+int poti_gamepad_vendor(lua_State *L) {
+    GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    lua_pushnumber(L, SDL_GameControllerGetVendor(*g));
+    return 1;
+}
+
+int poti_gamepad_product(lua_State *L) {
+    GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    lua_pushnumber(L, SDL_GameControllerGetProduct(*g));
+    return 1;
+}
+
+int poti_gamepad_product_version(lua_State *L) {
+    GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    lua_pushnumber(L, SDL_GameControllerGetProductVersion(*g));
+    return 1;
+}
+
+const char *gpad_axes[] = {
+    "leftx", "lefty", "rightx", "righty", "triggerleft", "triggerright"
+};
+
+int poti_gamepad_axis(lua_State *L) {
+    GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    const char *str = luaL_checkstring(L, 2);
+    int axis = SDL_GameControllerGetAxisFromString(str);
+    if (axis < 0) {
+        luaL_argerror(L, 2, "invalid axis");
+    }
+    lua_pushnumber(L, SDL_GameControllerGetAxis(*g, axis));
+    return 1;
+}
+
+int poti_gamepad_button(lua_State *L) {
+    GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    const char *str = luaL_checkstring(L, 2);
+    int button = SDL_GameControllerGetButtonFromString(str);
+    if (button < 0) {
+        luaL_argerror(L, 2, "invalid button");
+    }
+    lua_pushboolean(L, SDL_GameControllerGetButton(*g, button));
+    return 1;
+}
+
+int poti_gamepad_rumble(lua_State *L) {
+    GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    u16 low = luaL_checknumber(L, 2);
+    u16 high = luaL_checknumber(L, 3);
+    u32 freq = luaL_optnumber(L, 4, 100);
+    lua_pushboolean(L, SDL_GameControllerRumble(*g, low, high, freq) == 0);
+    return 1;
+}
+
+int poti_gamepad_close(lua_State *L) {
+    GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    SDL_GameControllerClose(*g);
+    return 0;
+}
+
+int poti_gamepad__gc(lua_State* L) {
+    GameController** g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
+    SDL_GameControllerClose(*g);
     return 0;
 }
 
