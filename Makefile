@@ -43,8 +43,8 @@ build: $(OUT)
 poti.h: $(GEN)
 	./$(GEN)
 
-$(GEN): gen.c
-	$(PREFIX)$(CC) gen.o -o gen $(CFLAGS)
+$(GEN): gen.o
+	$(PREFIX)$(CC) $< -o $@ $(CFLAGS)
 
 $(OUT): poti.h $(OBJ)
 	@echo "********************************************************"
@@ -62,3 +62,4 @@ $(OUT): poti.h $(OBJ)
 clean:
 	rm -f $(OBJ)
 	rm -f $(OUT)
+	rm -f gen.o $(GEN)

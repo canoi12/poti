@@ -41,7 +41,11 @@ static int new_file(const char *filename) {
 }
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
     fopen_s(&fp, "poti.h", "w");
+#else
+    fp = fopen("poti.h", "w");
+#endif
 
     fprintf(fp, "#ifndef POTI_H\n");
     fprintf(fp, "#define POTI_H\n");

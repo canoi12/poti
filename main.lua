@@ -12,7 +12,8 @@ local frames = {
 }
 
 function poti.load()
-    tex = poti.Texture("img.jpg")
+    -- tex = poti.Texture("img.jpg")
+    joy = poti.Joystick(0)
     canvas = poti.Texture(160, 95, "target")
     -- audio = poti.Audio("som.wav")
     -- font = poti.Font("pixelart.ttf", 8)
@@ -32,12 +33,15 @@ function poti.update(dt)
         frame = frame + 1
         if frame > #frames then frame = 1 end
     end
+    if joy:button(0) then
+        print("ok")
+    end
 end
 
 function poti.draw()
     poti.clear()
     
-    tex:draw()
+    -- tex:draw()
     -- poti.target(canvas)
     -- poti.mode("fill")
     -- poti.color(255, 255, 255)

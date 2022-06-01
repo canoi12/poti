@@ -447,6 +447,7 @@ int luaopen_poti(lua_State *L) {
         {"Texture", poti_new_texture},
         {"Font", poti_new_font},
         {"Audio", poti_new_audio},
+        {"Joystick", poti_joystick},
         /* Keyboard */
         {"key_down", poti_key_down},
         {"key_up", poti_key_up},
@@ -467,7 +468,7 @@ int luaopen_poti(lua_State *L) {
         {"_Texture", luaopen_texture},
         {"_Font", luaopen_font},
         {"_Audio", luaopen_audio},
-        {"_Joystick". luaopen_joystick},
+        {"_Joystick", luaopen_joystick},
         {NULL, NULL}
     };
 
@@ -1239,7 +1240,16 @@ int luaopen_mouse(lua_State *L) {
         {"released", poti_mouse_released},
         {NULL, NULL}
     };
-    
+    luaL_newlib(L, reg);
+
+    return 1;
+}
+
+int luaopen_joystick(lua_State *L) {
+    luaL_Reg reg[] = {
+        {"button", poti_jpad_button},
+        {NULL, NULL}
+    };
     luaL_newlib(L, reg);
 
     return 1;
@@ -1324,15 +1334,16 @@ int poti_mouse_released(lua_State *L) {
 }
 
 int poti_joystick(lua_State* L) {
-    Joystick** j = lua_newuserdata(L, sizeof * j);
+    Joystick** j = lua_newuserdata(L, sizeof(*j));
     luaL_setmetatable(L, JOYSTICK_CLASS);
+    printf("Joystick count: %d\n", SDL_NumJoysticks());
     int number = luaL_optnumber(L, 1, 0);
     *j = SDL_JoystickOpen(number);
 
     return 1;
 }
 
-int poti_jpad_down(lua_State* L) {
+int poti_jpad_button(lua_State* L) {
     Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     int button = luaL_checknumber(L, 2);
     int res = SDL_JoystickGetButton(*j, button);
