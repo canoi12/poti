@@ -30,6 +30,12 @@
     #define SBTAR_MALLOC malloc
 #endif
 
+#ifdef _WIN32
+#define SBTAR_STRCPY strcpy_s
+#else
+#define SBTAR_STRCPY strcpy
+#endif
+
 #define STR(x) #x
 #define SBTAR_ASSERT(expr)\
     if (!(expr)) {\
@@ -181,7 +187,12 @@ long _header_size(const posix_header_t *h) {
 int sbtar_open(sbtar_t *tar, const char *filename) {
   SBTAR_ASSERT(tar != NULL);
 
+#if defined(_WIN32)
+  fopen_s(&tar->fp, filename, "rb+");
+#else
   tar->fp = fopen(filename, "rb+");
+#endif
+ 
   if (!tar->fp) {
     fprintf(stderr, "Failed to open %s\n", filename);
     return 0;
@@ -257,13 +268,20 @@ void sbtar_header(sbtar_t *tar, sbtar_header_t *header) {
 
   posix_header_t posix;
   fread(&posix, SBTAR_BLOCK_SIZE, 1, tar->fp);
-  strcpy(h->name, posix.name);
-  strcpy(h->linkname, posix.linkname);
   h->size = _header_size(&posix);
   h->type = posix.typeflag - '0';
   h->mode = _str_oct_to_dec(posix.mode, 8 - 3);
+#ifdef _WIN32
+  strcpy_s(h->name, strlen(posix.name), posix.name);
+  strcpy_s(h->linkname, strlen(posix.linkname), posix.linkname);
+  strcpy_s(h->uname, strlen(posix.uname), posix.uname);
+  strcpy_s(h->gname, strlen(posix.gname), posix.gname);
+#else
+  strcpy(h->name, posix.name);
+  strcpy(h->linkname, posix.linkname);
   strcpy(h->uname, posix.uname);
   strcpy(h->gname, posix.gname);
+#endif
  /* h->mode*/
 
   sbtar_seek(tar, tar->offset);

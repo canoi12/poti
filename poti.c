@@ -7,9 +7,19 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
-#include "poti.h"
+#define POTI_VER "0.1.0"
 
-#include <SDL2/SDL.h>
+#ifdef _WIN32
+    #define SDL_MAIN_HANDLED
+#ifdef __MINGW32__
+    #include <SDL2/SDL.h>
+#else
+    #include <SDL.h>
+#endif
+#else
+    #include <SDL2/SDL.h>
+#endif
+
 #include "mocha.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -21,6 +31,8 @@
 #define SBTAR_IMPLEMENTATION
 #include "sbtar.h"
 
+#include "poti.h"
+
 #define POINT_CLASS "Point"
 #define RECT_CLASS "Rect"
 
@@ -28,6 +40,11 @@
 #define FONT_CLASS "Font"
 
 #define AUDIO_CLASS "Audio"
+
+#define JOYSTICK_CLASS "Joystick"
+#define GAMEPAD_CLASS "GamePad"
+
+#define poti() (&_ctx)
 
 typedef char i8;
 typedef unsigned char u8;
@@ -45,6 +62,13 @@ typedef u8 color_t[4];
 typedef SDL_Texture Texture;
 typedef struct Font Font;
 typedef mo_audio_t Audio;
+
+typedef SDL_Window Window;
+typedef SDL_Renderer Render;
+typedef SDL_Event Event;
+
+typedef SDL_Joystick Joystick;
+typedef SDL_GameController GameController;
 
 struct Font {
     struct {
@@ -71,9 +95,9 @@ struct Font {
 
 struct Context {
     lua_State *L;
-    SDL_Window *window;
-    SDL_Renderer *render;
-    SDL_Event event;
+    Window *window;
+    Render *render;
+    Event event;
 
     f64 last_time;
     f64 delta;
@@ -98,7 +122,6 @@ struct Context {
     int(*rect_from_table)(lua_State*, i32, SDL_Rect*);
 };
 
-#define poti() (&_ctx)
 struct Context _ctx;
 static const i8 *boot_lua = "local traceback = debug.traceback\n"
 "package.path = package.path .. ';core/?.lua;core/?/init.lua'\n"
@@ -158,10 +181,16 @@ static const char *boot_lua = "local traceback = debug.traceback\n"
 "xpcall(function() require 'main' end, _error)\n";
 #endif
 
+static int poti_init(void);
+static int poti_loop(void);
+static int poti_quit(void);
+
 static int luaopen_poti(lua_State *L);
 static int luaopen_texture(lua_State *L);
 static int luaopen_font(lua_State *L);
 static int luaopen_audio(lua_State *L);
+static int luaopen_joystick(lua_State *L);
+static int luaopen_gamepad(lua_State *L);
 
 /* Core */
 static int poti_ver(lua_State *L);
@@ -223,10 +252,15 @@ static int poti_mouse_up(lua_State *L);
 static int poti_mouse_pressed(lua_State *L);
 static int poti_mouse_released(lua_State *L);
 
-static int poti_jpad_down(lua_State *L);
-static int poti_jpad_up(lua_State *L);
-static int poti_jpad_pressed(lua_State *L);
-static int poti_jpad_released(lua_State *L);
+static int poti_joystick(lua_State* L);
+static int poti_jpad_button(lua_State *L);
+static int poti_jpad_axis(lua_State *L);
+static int poti_jpad_hat(lua_State *L);
+
+static int poti_gamepad(lua_State* L);
+static int poti_gpad_button(lua_State *L);
+static int poti_gpad_axis(lua_State *L);
+static int poti_gpad_hat(lua_State *L);
 // poti.key_down("a")
 // poti.mouse_down(1)
 // poti.jpad_down("a") poti.jpad_down("d_down")
@@ -234,7 +268,7 @@ static int poti_jpad_released(lua_State *L);
 
 static int s_setup_function_ptrs(struct Context *ctx);
 
-int poti_init(int flags) {
+int poti_init(void) {
     poti()->L = luaL_newstate();
 
 #if 0
@@ -261,7 +295,11 @@ int poti_init(int flags) {
     luaL_requiref(L, "poti", luaopen_poti, 1);
 
     char title[100];
+#ifdef _WIN32
+    sprintf_s(title, 100, "poti %s", POTI_VER);
+#else
     sprintf(title, "poti %s", POTI_VER);
+#endif
     if (SDL_Init(SDL_INIT_EVERYTHING)) {
         fprintf(stderr, "Failed to init SDL2: %s\n", SDL_GetError());
         exit(0);
@@ -281,10 +319,7 @@ int poti_init(int flags) {
         poti()->is_packed = 1;
     s_setup_function_ptrs(poti());
 
-    size_t font_data_size;
-    i8 *font_data = poti()->read_file("5x5.ttf", &font_data_size);
-    poti()->init_font(&poti()->default_font, font_data, font_data_size, 10);
-    free(font_data);
+    poti()->init_font(&poti()->default_font, _5x5_ttf, _5x5_ttf_size, 10);
 
     mo_init(0);
 
@@ -332,7 +367,7 @@ int poti_init(int flags) {
     return 1;
 }
 
-int poti_deinit() {
+int poti_quit(void) {
     SDL_DestroyWindow(poti()->window);
     SDL_DestroyRenderer(poti()->render);
     SDL_Quit();
@@ -432,6 +467,7 @@ int luaopen_poti(lua_State *L) {
         {"_Texture", luaopen_texture},
         {"_Font", luaopen_font},
         {"_Audio", luaopen_audio},
+        {"_Joystick". luaopen_joystick},
         {NULL, NULL}
     };
 
@@ -482,8 +518,13 @@ int luaopen_texture(lua_State *L) {
 
 static int _textype_from_string(lua_State *L, const char *name) {
     int usage = SDL_TEXTUREACCESS_STATIC;
-    if (!strcmp(name, "stream")) usage = SDL_TEXTUREACCESS_STREAMING;
+    if (!strcmp(name, "static")) usage = SDL_TEXTUREACCESS_STATIC;
+    else if (!strcmp(name, "stream")) usage = SDL_TEXTUREACCESS_STREAMING;
     else if (!strcmp(name, "target")) usage = SDL_TEXTUREACCESS_TARGET;
+    else {
+        lua_pushstring(L, "Invalid texture usage");
+        return 0;
+    }
 
     return usage;
 }
@@ -548,7 +589,7 @@ static int _texture_from_size(lua_State *L, Texture **tex) {
     w = luaL_checknumber(L, 1);
     h = luaL_checknumber(L, 2);
     
-    const char *s_usage = "static";
+    const char* s_usage = NULL;
     if (top > 1 && lua_type(L, top) == LUA_TSTRING)
         s_usage = luaL_checkstring(L, top);
 
@@ -1282,9 +1323,47 @@ int poti_mouse_released(lua_State *L) {
     return 1;
 }
 
+int poti_joystick(lua_State* L) {
+    Joystick** j = lua_newuserdata(L, sizeof * j);
+    luaL_setmetatable(L, JOYSTICK_CLASS);
+    int number = luaL_optnumber(L, 1, 0);
+    *j = SDL_JoystickOpen(number);
+
+    return 1;
+}
+
+int poti_jpad_down(lua_State* L) {
+    Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    int button = luaL_checknumber(L, 2);
+    int res = SDL_JoystickGetButton(*j, button);
+
+    lua_pushboolean(L, res);
+    return 1;
+}
+
+int poti_jpad_up(lua_State* L) {
+    Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    int button = luaL_checknumber(L, 2);
+    int res = !SDL_JoystickGetButton(*j, button);
+
+    lua_pushboolean(L, res);
+    return 1;
+}
+
+int poti_joystick__gc(lua_State* L) {
+    Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
+    SDL_JoystickClose(*j);
+
+    return 0;
+}
+
 static i8* s_read_file(const char *filename, size_t *size) {
     FILE *fp;
+#if defined(_WIN32)
+    fopen_s(&fp, filename, "rb+");
+#else
     fp = fopen(filename, "rb");
+#endif
     if (!fp) return NULL;
     fseek(fp, 0, SEEK_END);
     int sz = ftell(fp);
@@ -1312,7 +1391,7 @@ static i8* s_read_file_packed(const char *filename, size_t *size) {
 #define MAX_UNICODE 0x10FFFF
 
 static u8* s_utf8_codepoint(u8 *p, i32 *codepoint) {
-    u8 *n;
+    u8* n = NULL;
     u8 c = *p;
     if (c < 0x80) {
         *codepoint = c;
@@ -1348,8 +1427,9 @@ static u8* s_utf8_codepoint(u8 *p, i32 *codepoint) {
 }
 
 static int s_init_font(Font *font, const void *data, size_t buf_size, int font_size) {
+    if (buf_size <= 0) return 0;
     font->data = malloc(buf_size);
-    if (!data) {
+    if (!font->data) {
         fprintf(stderr, "Failed to alloc Font data\n");
         exit(EXIT_FAILURE);
     }
@@ -1393,8 +1473,10 @@ static int s_init_font(Font *font, const void *data, size_t buf_size, int font_s
 
     font->height = th;
 
-    u32 bitmap[tw * th];
-    memset(bitmap, 0, tw * th * 4);
+    const int final_size = tw * th;
+
+    u32* bitmap = malloc(final_size * sizeof(u32));
+    memset(bitmap, 0, final_size * sizeof(u32));
     int x = 0;
     SDL_PixelFormat *fmt = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA32);
     for (int i = 0; i < 256; i++) {
@@ -1425,6 +1507,7 @@ static int s_init_font(Font *font, const void *data, size_t buf_size, int font_s
     SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormatFrom(bitmap, tw, th, 1, tw * 4, SDL_PIXELFORMAT_RGBA32);
     SDL_Texture *tex = SDL_CreateTextureFromSurface(poti()->render, surf);
     SDL_FreeSurface(surf);
+    free(bitmap);
     font->tex = tex;
 }
 
@@ -1452,8 +1535,8 @@ int s_setup_function_ptrs(struct Context *ctx) {
 }
 
 int main(int argc, char ** argv) {
-    poti_init(0);
+    poti_init();
     poti_loop();
-    poti_deinit();
+    poti_quit();
     return 1;
 }

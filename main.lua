@@ -12,10 +12,10 @@ local frames = {
 }
 
 function poti.load()
-    tex = poti.Texture("profile.png")
+    tex = poti.Texture("img.jpg")
     canvas = poti.Texture(160, 95, "target")
-    audio = poti.Audio("som.wav")
-    font = poti.Font("pixelart.ttf", 8)
+    -- audio = poti.Audio("som.wav")
+    -- font = poti.Font("pixelart.ttf", 8)
     print(font)
 end
 
@@ -37,22 +37,22 @@ end
 function poti.draw()
     poti.clear()
     
-    poti.target(canvas)
-    poti.clear()
-    poti.mode("fill")
-    poti.color(255, 255, 255)
+    tex:draw()
+    -- poti.target(canvas)
+    -- poti.mode("fill")
+    -- poti.color(255, 255, 255)
+    -- -- poti.rectangle(x, 0, 32, 32)
     -- poti.rectangle(x, 0, 32, 32)
-    poti.rectangle(x, 0, 32, 32)
-    -- poti.mode("line")
-    poti.circle(x, 32, 8)
+    -- -- poti.mode("line")
+    -- poti.circle(x, 32, 8)
 
-    local mx, my = poti.mouse_pos()
-    mx = mx / 4
-    my = my / 4
-    poti.triangle(mx, my, x-16, 80, x+16, 80-16)
-    local str = string.format("Pos: %f %f", mx, my)
-    poti.print(str)
-    poti.target()
+    -- local mx, my = poti.mouse_pos()
+    -- mx = mx / 4
+    -- my = my / 4
+    -- poti.triangle(mx, my, x-16, 80, x+16, 80-16)
+    -- local str = string.format("Pos: %f %f", mx, my)
+    -- poti.print(str)
+    -- poti.target()
 
-    canvas:draw(nil, {0, 0, 640, 380})
+    -- canvas:draw(nil, {0, 0, 640, 380})
 end

@@ -8,4 +8,10 @@ poti
 *.pkg
 *.wav
 *.png
+*.jpg
 *.ttf
+*.exe
+cross
+*.dll
+*.ldtk
+VC
