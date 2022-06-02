@@ -100,6 +100,8 @@ struct Context {
     Window *window;
     Render *render;
     Event event;
+    
+    u8 should_close;
 
     f64 last_time;
     f64 delta;
@@ -125,24 +127,33 @@ struct Context {
 };
 
 struct Context _ctx;
+static const i8 _callbacks;
+static const i8 *_err_func =
+"function poti.error(msg, trace)\n"
+"    poti.update = function() end\n"
+"    poti.draw = function()\n"
+"        poti.print('error', 32)\n"
+"        poti.print(msg, 32, 16)\n"
+"        poti.print(trace, 32, 32)\n"
+"    end\n"
+"end\n"
+"local function _err(msg)\n"
+"    local trace = debug.traceback('', 1)\n"
+"    print('okok')\n"
+"    print(msg, trace)\n"
+"    poti.error(msg, trace)\n"
+"end\n"
+"return _err";
+
 static const i8 *boot_lua = "local traceback = debug.traceback\n"
 "package.path = package.path .. ';core/?.lua;core/?/init.lua'\n"
 "local function _err(msg)\n"
 "   local trace = traceback('', 1)\n"
-"   poti.error(msg, trace)\n"
 "   print(msg, trace)\n"
-"end\n"
-"function poti.error(msg, trace)\n"
-"   poti.update = function() end\n"
-"   poti.draw = function()\n" 
-"       poti.print('error', 32)\n"
-"       poti.print(msg, 32, 16)\n"
-"       poti.print(trace, 32, 32)\n"
-"   end\n"
+"   poti.error(msg, trace)\n"
 "end\n"
 "function poti.run()\n"
 "   if poti.load then poti.load() end\n"
-"   local delta = 0\n"
 "   return function()\n"
 "       dt = poti.delta()\n"
 "       if poti.update then poti.update(dt) end\n"
@@ -153,6 +164,14 @@ static const i8 *boot_lua = "local traceback = debug.traceback\n"
 "   return true\n"
 "end\n"
 "xpcall(function() require 'main' end, _err)";
+
+static int l_poti_run(lua_State *L) {
+    lua_getglobal(L, "xpcall");
+    lua_rawgetp(L, LUA_REGISTRYINDEX, boot_lua);
+    lua_rawgetp(L, LUA_REGISTRYINDEX, _err_func);
+    lua_pcall(L, 2, 3, 0);
+    lua_pop(L, 3);
+}
 
 #if 0
 static const char *boot_lua = "local traceback = debug.traceback\n"
@@ -186,14 +205,19 @@ static const char *boot_lua = "local traceback = debug.traceback\n"
 "xpcall(function() require 'main' end, _error)\n";
 #endif
 
-static int get_rect_from_table(lua_State* L, int idx, SDL_Rect* out);
-static int get_point_from_table(lua_State* L, int idx, SDL_Point* out);
+static int s_get_rect_from_table(lua_State* L, int idx, SDL_Rect* out);
+static int s_get_point_from_table(lua_State* L, int idx, SDL_Point* out);
+static void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SDL_Rect *rect, int width);
 
 static int poti_init(void);
 static int poti_loop(void);
 static int poti_quit(void);
 
+static int poti_call(const char *name, int args, int ret);
+static int poti_error(const char *msg, const char *trace);
+
 static int luaopen_poti(lua_State *L);
+static int luaopen_event(lua_State *L);
 static int luaopen_texture(lua_State *L);
 static int luaopen_font(lua_State *L);
 static int luaopen_audio(lua_State *L);
@@ -205,34 +229,90 @@ static int luaopen_gamepad(lua_State *L);
 /*=================================*
  *              Core               *
  *=================================*/
-static int poti_ver(lua_State *L);
-static int poti_delta(lua_State *L);
+static int l_poti_ver(lua_State *L);
+static int l_poti_delta(lua_State *L);
+static int l_poti_error(lua_State *L);
 
-static int poti_start_textinput(lua_State* L);
-static int poti_stop_textinput(lua_State* L);
-static int poti_textinput_rect(lua_State* L);
+/*=================================*
+ *              Event              *
+ *=================================*/
+
+static int l_poti_start_textinput(lua_State* L);
+static int l_poti_stop_textinput(lua_State* L);
+static int l_poti_textinput_rect(lua_State* L);
+
+/* Callbacks */
+static int l_poti_callback_quit(lua_State* L);
+static int l_poti_callback_keypressed(lua_State* L);
+static int l_poti_callback_keyreleased(lua_State* L);
+
+static int l_poti_callback_mousemotion(lua_State* L);
+static int l_poti_callback_mousebutton(lua_State* L);
+static int l_poti_callback_mousewheel(lua_State* L);
+
+static int l_poti_callback_joyaxismotion(lua_State* L);
+static int l_poti_callback_joyballmotion(lua_State* L);
+static int l_poti_callback_joyhatmotion(lua_State* L);
+static int l_poti_callback_joybutton(lua_State* L);
+static int l_poti_callback_joydevice(lua_State* L);
+
+static int l_poti_callback_gamepadaxismotion(lua_State* L);
+static int l_poti_callback_gamepadbutton(lua_State* L);
+static int l_poti_callback_gamepaddevice(lua_State* L);
+static int l_poti_callback_gamepadremap(lua_State* L);
+#if SDL_VERSION_ATLEAST(2, 1, 0)
+static int l_poti_callback_gamepadtouchpad(lua_State* L);
+static int l_poti_callback_gamepadtouchpadmotion(lua_State* L);
+#endif
+static int l_poti_callback_finger(lua_State* L);
+static int l_poti_callback_fingermotion(lua_State* L);
+static int l_poti_callback_dollargesture(lua_State* L);
+static int l_poti_callback_dollarrecord(lua_State* L);
+static int l_poti_callback_multigesture(lua_State* L);
+static int l_poti_callback_clipboardupdate(lua_State* L);
+static int l_poti_callback_dropfile(lua_State* L);
+static int l_poti_callback_droptext(lua_State* L);
+static int l_poti_callback_dropbegin(lua_State* L);
+static int l_poti_callback_dropcomplete(lua_State* L);
+
+static int l_poti_callback_audiodevice(lua_State* L);
+
+static int l_poti_callback_windowevent(lua_State* L);
+
+static int l_poti_callback_window_moved(lua_State* L);
+static int l_poti_callback_window_resized(lua_State* L);
+static int l_poti_callback_window_focus(lua_State* L);
+static int l_poti_callback_window_minimized(lua_State* L);
+static int l_poti_callback_window_maximized(lua_State* L);
+static int l_poti_callback_window_restored(lua_State* L);
+static int l_poti_callback_window_shown(lua_State* L);
+static int l_poti_callback_window_hidden(lua_State* L);
+static int l_poti_callback_window_mouse(lua_State* L);
+
+static int l_poti_callback_textinput(lua_State* L);
+static int l_poti_callback_textediting(lua_State* L);
 
 /*=================================*
  *              Audio              *
  *=================================*/
 static int poti_volume(lua_State *L);
-static int poti_new_audio(lua_State *L);
-static int poti_audio_play(lua_State *L);
-static int poti_audio_stop(lua_State *L);
-static int poti_audio_pause(lua_State *L);
-static int poti_audio_playing(lua_State *L);
-static int poti_audio_volume(lua_State *L);
-static int poti_audio_pitch(lua_State *L);
-static int poti_audio__gc(lua_State *L);
+static int l_poti_new_audio(lua_State *L);
+static int l_poti_audio_play(lua_State *L);
+static int l_poti_audio_stop(lua_State *L);
+static int l_poti_audio_pause(lua_State *L);
+static int l_poti_audio_playing(lua_State *L);
+static int l_poti_audio_volume(lua_State *L);
+static int l_poti_audio_pitch(lua_State *L);
+static int l_poti_audio__gc(lua_State *L);
 
 /*=================================*
  *           Filesystem            *
  *=================================*/
-static int poti_file(lua_State *L);
-static int poti_file_read(lua_State *L);
-static int poti_file_write(lua_State *L);
-static int poti_file_seek(lua_State *L);
-static int poti_file_tell(lua_State *L);
+static int l_poti_file(lua_State *L);
+static int l_poti_file_read(lua_State *L);
+static int l_poti_file_write(lua_State *L);
+static int l_poti_file_seek(lua_State *L);
+static int l_poti_file_tell(lua_State *L);
 static int poti_list_folder(lua_State *L);
 
 /*=================================*
@@ -240,83 +320,81 @@ static int poti_list_folder(lua_State *L);
  *=================================*/
 
 /* Texture */
-static int poti_new_texture(lua_State *L);
-static int poti_texture_draw(lua_State *L);
-static int poti_texture_width(lua_State *L);
-static int poti_texture_height(lua_State *L);
-static int poti_texture_size(lua_State *L);
-static int poti_texture__gc(lua_State *L);
+static int l_poti_new_texture(lua_State *L);
+static int l_poti_texture_draw(lua_State *L);
+static int l_poti_texture_width(lua_State *L);
+static int l_poti_texture_height(lua_State *L);
+static int l_poti_texture_size(lua_State *L);
+static int l_poti_texture__gc(lua_State *L);
 
 /* Font */
-static int poti_new_font(lua_State *L);
-static int poti_font_print(lua_State *L);
-static int poti_font__gc(lua_State *L);
+static int l_poti_new_font(lua_State *L);
+static int l_poti_font_print(lua_State *L);
+static int l_poti_font__gc(lua_State *L);
 
 
 /* Draw */
-static int poti_clear(lua_State *L);
-static int poti_color(lua_State *L);
-static int poti_mode(lua_State *L);
-static int poti_set_target(lua_State *L);
-static int poti_draw_point(lua_State *L);
-static int poti_draw_line(lua_State *L);
-static int poti_draw_rectangle(lua_State *L);
-static int poti_draw_circle(lua_State *L);
-static int poti_draw_triangle(lua_State *L);
-static int poti_print(lua_State *L);
+static int l_poti_clear(lua_State *L);
+static int l_poti_color(lua_State *L);
+static int l_poti_mode(lua_State *L);
+static int l_poti_set_target(lua_State *L);
+static int l_poti_draw_point(lua_State *L);
+static int l_poti_draw_line(lua_State *L);
+static int l_poti_draw_rectangle(lua_State *L);
+static int l_poti_draw_circle(lua_State *L);
+static int l_poti_draw_triangle(lua_State *L);
+static int l_poti_print(lua_State *L);
 
 /*=================================*
  *              Input              *
  *=================================*/
 
 /* Keyboard */
-static int poti_keyboard_down(lua_State *L);
-static int poti_keyboard_up(lua_State *L);
+static int l_poti_printdown(lua_State *L);
+static int l_poti_printup(lua_State *L);
 
 /* Mouse */
-static int poti_mouse_pos(lua_State *L);
-static int poti_mouse_down(lua_State *L);
-static int poti_mouse_up(lua_State *L);
-static int poti_mouse_pressed(lua_State *L);
-static int poti_mouse_released(lua_State *L);
+static int l_poti_mouse_pos(lua_State *L);
+static int l_poti_mouse_down(lua_State *L);
+static int l_poti_mouse_up(lua_State *L);
 
 /* Joystick */
 static int poti_joystick(lua_State* L);
 static int poti_num_joysticks(lua_State *L);
-// static int poti_joystick_opened(lua_State *L);
+// static int l_poti_joystick_opened(lua_State *L);
 
-static int poti_joystick_name(lua_State *L);
-static int poti_joystick_vendor(lua_State *L);
-static int poti_joystick_product(lua_State *L);
-static int poti_joystick_product_version(lua_State *L);
-static int poti_joystick_type(lua_State *L);
-static int poti_joystick_num_axes(lua_State *L);
-static int poti_joystick_num_balls(lua_State *L);
-static int poti_joystick_num_hats(lua_State *L);
-static int poti_joystick_num_buttons(lua_State *L);
-static int poti_joystick_button(lua_State *L);
-static int poti_joystick_axis(lua_State *L);
-static int poti_joystick_hat(lua_State *L);
-static int poti_joystick_ball(lua_State *L);
-static int poti_joystick_rumble(lua_State *L);
-static int poti_joystick_powerlevel(lua_State *L);
-static int poti_joystick_close(lua_State *L);
-static int poti_joystick__gc(lua_State *L);
+static int l_poti_joystick_name(lua_State *L);
+static int l_poti_joystick_vendor(lua_State *L);
+static int l_poti_joystick_product(lua_State *L);
+static int l_poti_joystick_product_version(lua_State *L);
+static int l_poti_joystick_type(lua_State *L);
+static int l_poti_joystick_num_axes(lua_State *L);
+static int l_poti_joystick_num_balls(lua_State *L);
+static int l_poti_joystick_num_hats(lua_State *L);
+static int l_poti_joystick_num_buttons(lua_State *L);
+static int l_poti_joystick_button(lua_State *L);
+static int l_poti_joystick_axis(lua_State *L);
+static int l_poti_joystick_hat(lua_State *L);
+static int l_poti_joystick_ball(lua_State *L);
+static int l_poti_joystick_rumble(lua_State *L);
+static int l_poti_joystick_powerlevel(lua_State *L);
+static int l_poti_joystick_close(lua_State *L);
+static int l_poti_joystick__gc(lua_State *L);
 
 /* Game Controller */
-static int poti_gamepad(lua_State *L);
-static int poti_is_gamepad(lua_State *L);
-static int poti_gamepad_name(lua_State *L);
-static int poti_gamepad_vendor(lua_State *L);
-static int poti_gamepad_product(lua_State *L);
-static int poti_gamepad_product_version(lua_State *L);
+static int l_poti_gamepad(lua_State *L);
+static int l_poti_is_gamepad(lua_State *L);
+static int l_poti_gamepad_name(lua_State *L);
+static int l_poti_gamepad_vendor(lua_State *L);
+static int l_poti_gamepad_product(lua_State *L);
+static int l_poti_gamepad_product_version(lua_State *L);
 
-static int poti_gamepad_axis(lua_State *L);
-static int poti_gamepad_button(lua_State *L);
-static int poti_gamepad_rumble(lua_State *L);
+static int l_poti_gamepad_axis(lua_State *L);
+static int l_poti_gamepad_button(lua_State *L);
+static int l_poti_gamepad_rumble(lua_State *L);
 
-static int poti_gamepad_close(lua_State *L);
-static int poti_gamepad__gc(lua_State *L);
+static int l_poti_gamepad_close(lua_State *L);
+static int l_poti_gamepad__gc(lua_State *L);
 
 static int s_setup_function_ptrs(struct Context *ctx);
 
@@ -375,6 +453,12 @@ int poti_init(void) {
 
     mo_init(0);
 
+    if (luaL_dostring(L, _err_func) != LUA_OK) {
+        const char *error_buf = lua_tostring(L, -1);
+        fprintf(stderr, "Failed to load poti lua error handler: %s\n", error_buf);
+        exit(0);
+    }
+    lua_rawsetp(L, LUA_REGISTRYINDEX, _err_func);
 #if 1
     if (luaL_dostring(L, boot_lua) != LUA_OK) {
 	const char *error_buf = lua_tostring(L, -1);
@@ -410,8 +494,14 @@ int poti_init(void) {
             int err = lua_pcall(L, 0, 1, 0);
             if (err) {
                 const char *str = lua_tostring(L, -1);
-                fprintf(stderr, "Lua error: %s", str);
-                exit(0);
+                fprintf(stderr, "Lua error: %s", lua_tostring(L, -1));
+                lua_rawgetp(L, LUA_REGISTRYINDEX, _err_func);
+                lua_pushstring(L, str);
+                lua_pcall(L, 1, 0, 0);
+                luaL_loadstring(L, "return function()\n"
+                "    if poti.update then poti.update(poti.delta()) end\n"
+                "    if poti.draw then poti.draw() end\n"
+                "end");
             }
             lua_rawsetp(L, LUA_REGISTRYINDEX, boot_lua);
         }
@@ -455,403 +545,30 @@ static int _poti_step(lua_State *L) {
     return 1;
 }
 
-static int _poti_callback(const char* name, int args, int res) {
-    lua_State* L = poti()->L;
-    int top = lua_gettop(L);
-    //printf("call: %s args: %d res: %d\n", name, args, res);
-    int debug_index = 1;
-    //printf("%d.top: %d\n", debug_index++, lua_gettop(L));
-    lua_getglobal(L, "poti");
-    if (!lua_isnil(L, -1)) {
-        lua_getfield(L, -1, name);
-        lua_remove(L, -2);
-        //printf("%d.top: %d\n", debug_index++, lua_gettop(L));
-        if (!lua_isnil(L, -1)) {
-            for (int i = 0; i < args; i++) {
-                lua_pushvalue(L, -args - 1);
-            }
-            //printf("%d.top: %d\n", debug_index++, lua_gettop(L));
-            int err = lua_pcall(L, args, res, 0);
-            if (err) {
-                const char* str = lua_tostring(L, -1);
-                fprintf(stderr, "Lua error: %s", str);
-                exit(0);
-            }
-        }
-        else lua_pop(L, 1);
-        //printf("%d.top: %d\n", debug_index++, lua_gettop(L));
-        for (int i = 0; i < args; i++)
-            lua_remove(L, -res-1);
-        //printf("%d.top: %d\n", debug_index++, lua_gettop(L));
-    }
-}
-
-static char textEditStr[SDL_TEXTEDITINGEVENT_TEXT_SIZE];
-
-int poti_loop() {
+int poti_loop(void) {
     char should_close = 0;
     SDL_Event *event = &poti()->event;
     double current_time;
     poti()->last_time = SDL_GetTicks();
     lua_State* L = poti()->L;
-    while (!should_close) {
+    while (!poti()->should_close) {
         SDL_Rect tr = { 0, 0, 320, 195 };
         SDL_SetTextInputRect(&tr);
+        lua_rawgetp(L, LUA_REGISTRYINDEX, &_callbacks);
         while (SDL_PollEvent(event)) {
-            switch (event->type) {
-                case SDL_QUIT:
-                {
-                    _poti_callback("quit", 0, 1);
-                    should_close = lua_toboolean(L, -1);
-                    lua_pop(L, 1);
-                }
-                break;
-                case SDL_JOYAXISMOTION:
-                {
-                    lua_pushnumber(L, event->jaxis.which);
-                    lua_pushnumber(L, event->jaxis.axis);
-                    lua_pushnumber(L, event->jaxis.value);
-                    _poti_callback("joy_axismotion", 3, 0);
-                }
-                break;
-                case SDL_JOYBALLMOTION:
-                {
-                    lua_pushnumber(L, event->jball.which);
-                    lua_pushnumber(L, event->jball.ball);
-                    lua_pushnumber(L, event->jball.xrel);
-                    lua_pushnumber(L, event->jball.yrel);
-                    _poti_callback("joy_ballmotion", 4, 0);
-                }
-                break;
-                case SDL_JOYHATMOTION:
-                {
-                    lua_pushnumber(L, event->jhat.which);
-                    lua_pushnumber(L, event->jhat.hat);
-                    lua_pushnumber(L, event->jhat.value);
-                    _poti_callback("joy_hatmotion", 3, 0);
-                }
-                break;
-                case SDL_JOYBUTTONDOWN:
-                case SDL_JOYBUTTONUP:
-                {
-                    lua_pushnumber(L, event->jbutton.which);
-                    lua_pushnumber(L, event->jbutton.button);
-                    lua_pushboolean(L, event->jbutton.state);
-                    _poti_callback("joy_button", 3, 0);
-                }
-                break;
-                case SDL_JOYDEVICEREMOVED:
-                {
-                    lua_pushnumber(L, event->jdevice.which);
-                    _poti_callback("joy_device_removed", 1, 0);
-                }
-                break;
-                case SDL_JOYDEVICEADDED:
-                {
-                    lua_pushnumber(L, event->jdevice.which);
-                    _poti_callback("joy_device_added", 1, 0);
-                }
-                break;
-                case SDL_CONTROLLERAXISMOTION:
-                {
-                    lua_pushnumber(L, event->jaxis.which);
-                    lua_pushstring(L, SDL_GameControllerGetStringForAxis(event->jaxis.axis));
-                    lua_pushnumber(L, event->jaxis.value);
-                    _poti_callback("gpad_axismotion", 3, 0);
-                }
-                break;
-                case SDL_CONTROLLERBUTTONDOWN:
-                case SDL_CONTROLLERBUTTONUP:
-                {
-                    lua_pushnumber(L, event->jbutton.which);
-                    lua_pushstring(L, SDL_GameControllerGetStringForButton(event->jbutton.button));
-                    lua_pushboolean(L, event->jbutton.state);
-                    _poti_callback("gpad_button", 3, 0);
-                }
-                break;
-                case SDL_CONTROLLERDEVICEADDED:
-                {
-                    lua_pushnumber(L, event->jdevice.which);
-                    _poti_callback("gpad_device_added", 1, 0);
-                }
-                break;
-                case SDL_CONTROLLERDEVICEREMOVED:
-                {
-                    lua_pushnumber(L, event->jdevice.which);
-                    _poti_callback("gpad_device_removed", 1, 0);
-                }
-                break;
-                case SDL_CONTROLLERDEVICEREMAPPED:
-                {
-                    lua_pushnumber(L, event->jdevice.which);
-                    _poti_callback("gpad_device_remapped", 1, 0);
-                }
-                break;
-                case SDL_CONTROLLERTOUCHPADDOWN:
-                case SDL_CONTROLLERTOUCHPADUP:
-                {
-                    lua_pushnumber(L, event->ctouchpad.which);
-                    lua_pushboolean(L, SDL_CONTROLLERTOUCHPADUP - event->type);
-                    lua_pushnumber(L, event->ctouchpad.touchpad);
-                    lua_pushnumber(L, event->ctouchpad.finger);
-                    lua_pushnumber(L, event->ctouchpad.x);
-                    lua_pushnumber(L, event->ctouchpad.y);
-                    lua_pushnumber(L, event->ctouchpad.pressure);
-                    _poti_callback("gpad_touchpad", 7, 0);
-                }
-                break;
-                case SDL_CONTROLLERTOUCHPADMOTION:
-                {
-                    lua_pushnumber(L, event->ctouchpad.which);
-                    lua_pushnumber(L, event->ctouchpad.touchpad);
-                    lua_pushnumber(L, event->ctouchpad.finger);
-                    lua_pushnumber(L, event->ctouchpad.x);
-                    lua_pushnumber(L, event->ctouchpad.y);
-                    lua_pushnumber(L, event->ctouchpad.pressure);
-                    _poti_callback("gpad_touchpad_motion", 6, 0);
-                }
-                break;
-                case SDL_FINGERDOWN:
-                case SDL_FINGERUP:
-                {
-                    lua_pushnumber(L, event->tfinger.touchId);
-                    lua_pushboolean(L, SDL_FINGERUP - event->type);
-                    lua_pushnumber(L, event->tfinger.fingerId);
-                    lua_pushnumber(L, event->tfinger.x);
-                    lua_pushnumber(L, event->tfinger.y);
-                    lua_pushnumber(L, event->tfinger.pressure);
-                    _poti_callback("touch_finger", 6, 0);
-                }
-                break;
-                case SDL_FINGERMOTION:
-                {
-                    lua_pushnumber(L, event->tfinger.touchId);
-                    lua_pushnumber(L, event->tfinger.fingerId);
-                    lua_pushnumber(L, event->tfinger.x);
-                    lua_pushnumber(L, event->tfinger.y);
-                    lua_pushnumber(L, event->tfinger.pressure);
-                    _poti_callback("touch_finger_motion", 6, 0);
-                }
-                break;
-                case SDL_DOLLARGESTURE:
-                {
-                    lua_pushnumber(L, event->dgesture.touchId);
-                    lua_pushnumber(L, event->dgesture.gestureId);
-                    lua_pushnumber(L, event->dgesture.numFingers);
-                    lua_pushnumber(L, event->dgesture.error);
-                    lua_pushnumber(L, event->dgesture.x);
-                    lua_pushnumber(L, event->dgesture.y);
-                    _poti_callback("dollar_gesture", 7, 0);
-                }
-                break;
-                case SDL_DOLLARRECORD:
-                {
-                    lua_pushnumber(L, event->dgesture.touchId);
-                    lua_pushnumber(L, event->dgesture.gestureId);
-                    lua_pushnumber(L, event->dgesture.numFingers);
-                    lua_pushnumber(L, event->dgesture.error);
-                    lua_pushnumber(L, event->dgesture.x);
-                    lua_pushnumber(L, event->dgesture.y);
-                    _poti_callback("dollar_record", 7, 0);
-                }
-                break;
-                case SDL_MULTIGESTURE:
-                {
-                    lua_pushnumber(L, event->mgesture.touchId);
-                    lua_pushnumber(L, event->mgesture.numFingers);
-                    lua_pushnumber(L, event->mgesture.dTheta);
-                    lua_pushnumber(L, event->mgesture.dDist);
-                    lua_pushnumber(L, event->mgesture.x);
-                    lua_pushnumber(L, event->mgesture.y);
-                    _poti_callback("multi_gesture", 7, 0);
-                }
-                break;
-                case SDL_CLIPBOARDUPDATE:
-                {
-                    lua_pushstring(L, SDL_GetClipboardText());
-                    _poti_callback("clipboard_update", 1, 0);
-                }
-                break;
-                case SDL_DROPFILE:
-                {
-                    lua_pushnumber(L, event->drop.windowID);
-                    lua_pushstring(L, event->drop.file);
-                    _poti_callback("drop_file", 2, 0);
-                }
-                break;
-                case SDL_DROPTEXT:
-                {
-                    lua_pushnumber(L, event->drop.windowID);
-                    lua_pushstring(L, event->drop.file);
-                    _poti_callback("drop_text", 2, 0);
-                }
-                break;
-                case SDL_DROPBEGIN:
-                {
-                    lua_pushnumber(L, event->drop.windowID);
-                    _poti_callback("drop_begin", 1, 0);
-                }
-                break;
-                case SDL_DROPCOMPLETE:
-                {
-                    lua_pushnumber(L, event->drop.windowID);
-                    _poti_callback("drop_complete", 1, 0);
-                }
-                break;
-                case SDL_AUDIODEVICEADDED:
-                case SDL_AUDIODEVICEREMOVED:
-                {
-                    lua_pushnumber(L, event->adevice.which);
-                    lua_pushboolean(L, SDL_AUDIODEVICEREMOVED - event->adevice.type);
-                    lua_pushboolean(L, event->adevice.iscapture);
-                    _poti_callback("audio_device", 3, 0);
-                }
-                break;
-                case SDL_KEYDOWN:
-                {
-                    lua_getglobal(L, "string");
-                    lua_getfield(L, -1, "lower");
-                    lua_remove(L, -2);
-                    lua_pushstring(L, SDL_GetKeyName(event->key.keysym.sym));
-                    lua_pcall(L, 1, 1, 0);
-                    lua_pushboolean(L, event->key.repeat);
-                    _poti_callback("key_pressed", 2, 0);
-                }
-                break;
-                case SDL_KEYUP:
-                {
-                    lua_pushstring(L, SDL_GetKeyName(event->key.keysym.sym));
-                    lua_pushboolean(L, event->key.repeat);
-                    _poti_callback("key_released", 2, 0);
-                }
-                break;
-                case SDL_MOUSEMOTION:
-                {
-                    lua_pushnumber(L, event->motion.x);
-                    lua_pushnumber(L, event->motion.y);
-                    lua_pushnumber(L, event->motion.xrel);
-                    lua_pushnumber(L, event->motion.yrel);
-                    lua_pushnumber(L, event->motion.state);
-                    _poti_callback("mouse_motion", 5, 0);
-                }
-                break;
-                case SDL_MOUSEBUTTONDOWN:
-                case SDL_MOUSEBUTTONUP:
-                {
-                    lua_pushnumber(L, event->button.button);
-                    lua_pushboolean(L, event->button.state);
-                    lua_pushnumber(L, event->button.clicks);
-                    _poti_callback("mouse_button", 3, 0);
-                }
-                break;
-                case SDL_MOUSEWHEEL:
-                {
-                    lua_pushnumber(L, event->wheel.x);
-                    lua_pushnumber(L, event->wheel.y);
-                    lua_pushnumber(L, event->wheel.direction);
-                    _poti_callback("mouse_wheel", 3, 0);
-                }
-                break;
-                case SDL_WINDOWEVENT:
-                {
-                    switch (event->window.event)
-                    {
-                    case SDL_WINDOWEVENT_SIZE_CHANGED:
-                    case SDL_WINDOWEVENT_RESIZED:
-                    {
-                        lua_pushnumber(L, event->window.windowID);
-                        lua_pushnumber(L, event->window.data1);
-                        lua_pushnumber(L, event->window.data2);
-                        _poti_callback("window_resized", 3, 0);
-                    }
-                    break;
-                    case SDL_WINDOWEVENT_MOVED:
-                    {
-                        lua_pushnumber(L, event->window.windowID);
-                        lua_pushnumber(L, event->window.data1);
-                        lua_pushnumber(L, event->window.data2);
-                        _poti_callback("window_moved", 3, 0);
-                    }
-                    break;
-                    case SDL_WINDOWEVENT_MINIMIZED:
-                    {
-                        lua_pushnumber(L, event->window.windowID);
-                        _poti_callback("window_minimized", 1, 0);
-                    }
-                    break;
-                    case SDL_WINDOWEVENT_MAXIMIZED:
-                    {
-                        lua_pushnumber(L, event->window.windowID);
-                        _poti_callback("window_maximized", 1, 0);
-                    }
-                    break;
-                    case SDL_WINDOWEVENT_RESTORED:
-                    {
-                        lua_pushnumber(L, event->window.windowID);
-                        _poti_callback("window_restored", 1, 0);
-                    }
-                    break;
-                    case SDL_WINDOWEVENT_LEAVE:
-                    case SDL_WINDOWEVENT_ENTER:
-                    {
-                        lua_pushnumber(L, event->window.windowID);
-                        lua_pushboolean(L, SDL_WINDOWEVENT_LEAVE - event->window.event);
-                        _poti_callback("window_mouse", 2, 0);
-                    }
-                    break;
-                    case SDL_WINDOWEVENT_FOCUS_LOST:
-                    case SDL_WINDOWEVENT_FOCUS_GAINED:
-                    {
-                        lua_pushnumber(L, event->window.windowID);
-                        lua_pushboolean(L, SDL_WINDOWEVENT_FOCUS_LOST - event->window.event);
-                        _poti_callback("window_focus", 2, 0);
-                    }
-                    break;
-                    }
-                }
-                break;
-                case SDL_TEXTEDITING:
-                {
-                    lua_pushnumber(L, event->edit.windowID);
-                    lua_pushstring(L, (const char*)event->edit.text);
-                    lua_pushnumber(L, event->edit.start);
-                    lua_pushnumber(L, event->edit.length);
-                    _poti_callback("text_edit", 4, 0);
-                }
-                break;
-                case SDL_TEXTINPUT:
-                {
-                    lua_pushnumber(L, event->text.windowID);
-                    lua_pushstring(L, event->text.text);
-                    _poti_callback("text_input", 2, 0);
-                }
-                break;
-                case SDL_USEREVENT:
-                {
-                    lua_pushnumber(L, event->user.windowID);
-                    lua_pushnumber(L, event->user.code);
-                    lua_pushlightuserdata(L, event->user.data1);
-                    lua_pushlightuserdata(L, event->user.data2);
-                    _poti_callback("user_event", 4, 0);
-                }
-                break;
-                case SDL_SYSWMEVENT:
-                {
-                }
-                break;
-                default:
-                {
-                    lua_pushnumber(L, event->type);
-                    lua_pushstring(L, "Unknown event");
-                    _poti_callback("unknown_event", 2, 0);
-                }
-                break;
-            }
+            lua_rawgeti(L, -1, event->type);
+            // fprintf(stderr, "lua top: %d\n", lua_gettop(L));
+            // fprintf(stderr, "event: %d\n", event->type);
+            if (!lua_isnil(L, -1)) {
+                lua_pushlightuserdata(L, event);
+                lua_pcall(L, 1, 0, 0);
+            } else lua_pop(L, 1);
         }
         current_time = SDL_GetTicks();
         poti()->delta = (current_time - poti()->last_time) / 1000.f;
         poti()->last_time = current_time;
-        _poti_step(poti()->L);
+       // _poti_step(poti()->L);
+       l_poti_run(L);
 
         SDL_RenderPresent(poti()->render);
     }
@@ -859,48 +576,60 @@ int poti_loop() {
     return 1;
 }
 
+int poti_call(const char *name, int args, int ret) {
+    lua_State* L = poti()->L;
+    lua_getglobal(L, "poti");
+    if (!lua_isnil(L, -1)) {
+        lua_getfield(L, -1, name);
+        lua_remove(L, -2);
+        if (!lua_isnil(L, -1)) {
+            for (int i = 0; i < args; i++) {
+                lua_pushvalue(L, -args - 1);
+            }
+            int err = lua_pcall(L, args, ret, 0);
+            if (err) {
+                const char* str = lua_tostring(L, -1);
+                fprintf(stderr, "Lua error: %s", str);
+                exit(0);
+            }
+        }
+        else lua_pop(L, 1);
+        for (int i = 0; i < args; i++)
+            lua_remove(L, -ret-1);
+    }
+    return 0;
+}
+
 int luaopen_poti(lua_State *L) {
     luaL_Reg reg[] = {
-        {"ver", poti_ver},
-        {"delta", poti_delta},
-        {"start_textinput", poti_start_textinput},
-        {"stop_textinput", poti_stop_textinput},
-        {"textinput_rect", poti_textinput_rect},
+        {"ver", l_poti_ver},
+        {"delta", l_poti_delta},
+        {"start_textinput", l_poti_start_textinput},
+        {"stop_textinput", l_poti_stop_textinput},
+        {"textinput_rect", l_poti_textinput_rect},
         /* Draw */
-        {"clear", poti_clear},
-        {"mode", poti_mode},
-        {"color", poti_color},
-        {"target", poti_set_target},
-        {"point", poti_draw_point},
-        {"line", poti_draw_line},
-        {"circle", poti_draw_circle},
-        {"rectangle", poti_draw_rectangle},
-        {"triangle", poti_draw_triangle},
-        {"print", poti_print},
+        {"clear", l_poti_clear},
+        {"mode", l_poti_mode},
+        {"color", l_poti_color},
+        {"target", l_poti_set_target},
+        {"point", l_poti_draw_point},
+        {"line", l_poti_draw_line},
+        {"circle", l_poti_draw_circle},
+        {"rectangle", l_poti_draw_rectangle},
+        {"triangle", l_poti_draw_triangle},
+        {"print", l_poti_print},
         /* Audio */
         {"volume", poti_volume},
         /* Types */
-        {"Texture", poti_new_texture},
-        {"Font", poti_new_font},
-        {"Audio", poti_new_audio},
+        {"Texture", l_poti_new_texture},
+        {"Font", l_poti_new_font},
+        {"Audio", l_poti_new_audio},
         {"Joystick", poti_joystick},
-        {"Gamepad", poti_gamepad},
-        // {"Gamepad", poti_gamepad},
-        /* Keyboard */
-        //{"key_down", poti_key_down},
-        //{"key_up", poti_key_up},
-        //{"key_pressed", poti_key_pressed},
-        //{"key_released", poti_key_released},
-        /* Mouse */
-        //{"mouse_pos", poti_mouse_pos},
-        //{"mouse_down", poti_mouse_down},
-        //{"mouse_up", poti_mouse_up},
-        //{"mouse_pressed", poti_mouse_pressed},
-        //{"mouse_released", poti_mouse_released},
+        {"Gamepad", l_poti_gamepad},
         /* Joystick */
         {"num_joysticks", poti_num_joysticks},
         /* Gamepad */
-        {"is_gamepad", poti_is_gamepad},
+        {"is_gamepad", l_poti_is_gamepad},
         {NULL, NULL}
     };
 
@@ -914,6 +643,7 @@ int luaopen_poti(lua_State *L) {
         {"_Gamepad", luaopen_gamepad},
         {"mouse", luaopen_mouse},
         {"keyboard", luaopen_keyboard},
+        {"event", luaopen_event},
         {NULL, NULL}
     };
 
@@ -928,30 +658,458 @@ int luaopen_poti(lua_State *L) {
     return 1;
 }
 
-int poti_ver(lua_State *L) {
+/*=================================*
+ *              Core               *
+ *=================================*/
+int l_poti_ver(lua_State *L) {
     lua_pushstring(L, POTI_VER);
     return 1;
 }
 
-int poti_delta(lua_State *L) {
+int l_poti_delta(lua_State *L) {
     lua_pushnumber(L, poti()->delta);
     return 1;
 }
 
-int poti_start_textinput(lua_State* L) {
+/*=================================*
+ *              Event              *
+ *=================================*/
+
+int luaopen_event(lua_State *L) {
+    lua_newtable(L);
+
+    struct {
+        i32 type;
+        lua_CFunction fn;
+    } fn[] = {
+        {SDL_QUIT, l_poti_callback_quit},
+        {SDL_KEYDOWN, l_poti_callback_keypressed},
+        {SDL_KEYUP, l_poti_callback_keyreleased},
+        {SDL_MOUSEMOTION, l_poti_callback_mousemotion},
+        {SDL_MOUSEBUTTONDOWN, l_poti_callback_mousebutton},
+        {SDL_MOUSEBUTTONUP, l_poti_callback_mousebutton},
+        {SDL_MOUSEWHEEL, l_poti_callback_mousewheel},
+        {SDL_JOYAXISMOTION, l_poti_callback_joyaxismotion},
+        {SDL_JOYBALLMOTION, l_poti_callback_joyballmotion},
+        {SDL_JOYHATMOTION, l_poti_callback_joyhatmotion},
+        {SDL_JOYBUTTONDOWN, l_poti_callback_joybutton},
+        {SDL_JOYBUTTONUP, l_poti_callback_joybutton},
+        {SDL_CONTROLLERAXISMOTION, l_poti_callback_gamepadaxismotion},
+        {SDL_CONTROLLERBUTTONDOWN, l_poti_callback_gamepadbutton},
+        {SDL_CONTROLLERBUTTONUP, l_poti_callback_gamepadbutton},
+        {SDL_CONTROLLERDEVICEADDED, l_poti_callback_gamepaddevice},
+        {SDL_CONTROLLERDEVICEREMOVED, l_poti_callback_gamepaddevice},
+        {SDL_CONTROLLERDEVICEREMAPPED, l_poti_callback_gamepadremap},
+        {SDL_FINGERDOWN, l_poti_callback_finger},
+        {SDL_FINGERUP, l_poti_callback_finger},
+        {SDL_FINGERMOTION, l_poti_callback_fingermotion},
+        {SDL_DOLLARGESTURE, l_poti_callback_dollargesture},
+        {SDL_DOLLARRECORD, l_poti_callback_dollarrecord},
+        {SDL_MULTIGESTURE, l_poti_callback_multigesture},
+        {SDL_CLIPBOARDUPDATE, l_poti_callback_clipboardupdate},
+        {SDL_DROPFILE, l_poti_callback_dropfile},
+        {SDL_DROPTEXT, l_poti_callback_droptext},
+        {SDL_DROPBEGIN, l_poti_callback_dropbegin},
+        {SDL_DROPCOMPLETE, l_poti_callback_dropcomplete},
+        {SDL_AUDIODEVICEADDED, l_poti_callback_audiodevice},
+        {SDL_AUDIODEVICEREMOVED, l_poti_callback_audiodevice},
+        {SDL_WINDOWEVENT, l_poti_callback_windowevent},
+        {SDL_TEXTINPUT, l_poti_callback_textinput},
+        {SDL_TEXTEDITING, l_poti_callback_textediting},
+        {-1, NULL}
+    };
+
+    i32 i;
+    for (i = 0; fn[i].type != -1; i++) {
+        lua_pushinteger(L, fn[i].type);
+        lua_pushcfunction(L, fn[i].fn);
+        lua_settable(L, -3);
+    }
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &_callbacks);
+
+    luaL_Reg reg[] = {
+        {NULL, NULL}
+    };
+
+    luaL_newlib(L, reg);
+
+
+    return 1;
+}
+
+int l_poti_start_textinput(lua_State* L) {
     SDL_StartTextInput();
     return 0;
 }
 
-int poti_stop_textinput(lua_State* L) {
+int l_poti_stop_textinput(lua_State* L) {
     SDL_StopTextInput();
     return 0;
 }
 
-int poti_textinput_rect(lua_State* L) {
+int l_poti_textinput_rect(lua_State* L) {
     SDL_Rect r;
-    get_rect_from_table(L, 1, &r);
+    s_get_rect_from_table(L, 1, &r);
     SDL_SetTextInputRect(&r);
+    return 0;
+}
+
+int l_poti_callback_quit(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    poti_call("quit", 0, 1);
+    poti()->should_close = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    return 0;
+}
+
+int l_poti_callback_keypressed(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_getglobal(L, "string");
+    lua_getfield(L, -1, "lower");
+    lua_remove(L, -2);
+    lua_pushstring(L, SDL_GetKeyName(event->key.keysym.sym));
+    lua_call(L, 1, 1);
+    lua_pushboolean(L, event->key.repeat);
+    poti_call("key_pressed", 2, 0);
+    return 0;
+}
+
+int l_poti_callback_keyreleased(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushstring(L, SDL_GetKeyName(event->key.keysym.sym));
+    poti_call("key_released", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_mousemotion(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->motion.x);
+    lua_pushnumber(L, event->motion.y);
+    lua_pushnumber(L, event->motion.xrel);
+    lua_pushnumber(L, event->motion.yrel);
+    lua_pushnumber(L, event->motion.state);
+    poti_call("mouse_motion", 5, 0);
+    return 0;
+}
+
+int l_poti_callback_mousebutton(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->button.button);
+    lua_pushboolean(L, event->button.state);
+    lua_pushnumber(L, event->button.clicks);
+    poti_call("mouse_button", 3, 0);
+    return 0;
+}
+
+int l_poti_callback_mousewheel(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->wheel.x);
+    lua_pushnumber(L, event->wheel.y);
+    poti_call("mouse_wheel", 2, 0);
+    return 0;
+}
+
+int l_poti_callback_joyaxismotion(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->jaxis.which);
+    lua_pushnumber(L, event->jaxis.axis);
+    lua_pushnumber(L, event->jaxis.value);
+    poti_call("joy_axismotion", 3, 0);
+    return 0;
+}
+
+int l_poti_callback_joyballmotion(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->jball.which);
+    lua_pushnumber(L, event->jball.ball);
+    lua_pushnumber(L, event->jball.xrel);
+    lua_pushnumber(L, event->jball.yrel);
+    poti_call("joy_ballmotion", 4, 0);
+    return 0;
+}
+
+int l_poti_callback_joyhatmotion(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->jhat.which);
+    lua_pushnumber(L, event->jhat.hat);
+    lua_pushnumber(L, event->jhat.value);
+    poti_call("joy_hatmotion", 3, 0);
+    return 0;
+}
+
+int l_poti_callback_joybutton(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->jbutton.which);
+    lua_pushnumber(L, event->jbutton.button);
+    lua_pushboolean(L, event->jbutton.state);
+    poti_call("joy_button", 3, 0);
+    return 0;
+}
+
+int l_poti_callback_joydevice(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->jdevice.which);
+    lua_pushboolean(L, SDL_JOYDEVICEREMOVED - event->jdevice.type);
+    poti_call("joy_device", 2, 0);
+    return 0;
+}
+
+int l_poti_callback_gamepadaxismotion(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->caxis.which);
+    lua_pushstring(L, SDL_GameControllerGetStringForAxis(event->caxis.axis));
+    lua_pushnumber(L, event->caxis.value);
+    poti_call("gpad_axismotion", 3, 0);
+    return 0;
+}
+
+int l_poti_callback_gamepadbutton(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->cbutton.which);
+    lua_pushstring(L, SDL_GameControllerGetStringForButton(event->cbutton.button));
+    lua_pushboolean(L, event->cbutton.state);
+    poti_call("gpad_button", 3, 0);
+    return 0;
+}
+
+int l_poti_callback_gamepaddevice(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->cdevice.which);
+    lua_pushboolean(L, SDL_CONTROLLERDEVICEREMOVED - event->cdevice.type);
+    poti_call("gpad_device", 2, 0);
+    return 0;
+}
+
+int l_poti_callback_gamepadremap(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->cdevice.which);
+    lua_pushstring(L, SDL_GameControllerNameForIndex(event->cdevice.which));
+    poti_call("gpad_remap", 2, 0);
+    return 0;
+}
+
+static int l_poti_callback_finger(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->tfinger.touchId);
+    lua_pushboolean(L, SDL_FINGERUP - event->type);
+    lua_pushnumber(L, event->tfinger.fingerId);
+    lua_pushnumber(L, event->tfinger.x);
+    lua_pushnumber(L, event->tfinger.y);
+    lua_pushnumber(L, event->tfinger.dx);
+    lua_pushnumber(L, event->tfinger.dy);
+    lua_pushnumber(L, event->tfinger.pressure);
+    poti_call("finger_down", 8, 0);
+    return 0;
+}
+
+static int l_poti_callback_fingermotion(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->tfinger.touchId);
+    lua_pushnumber(L, event->tfinger.fingerId);
+    lua_pushnumber(L, event->tfinger.x);
+    lua_pushnumber(L, event->tfinger.y);
+    lua_pushnumber(L, event->tfinger.dx);
+    lua_pushnumber(L, event->tfinger.dy);
+    lua_pushnumber(L, event->tfinger.pressure);
+    poti_call("finger_motion", 7, 0);
+    return 0;
+}
+
+static int l_poti_callback_dollargesture(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->dgesture.touchId);
+    lua_pushnumber(L, event->dgesture.gestureId);
+    lua_pushnumber(L, event->dgesture.numFingers);
+    lua_pushnumber(L, event->dgesture.error);
+    lua_pushnumber(L, event->dgesture.x);
+    lua_pushnumber(L, event->dgesture.y);
+    poti_call("dgesture", 6, 0);
+    return 0;
+}
+
+static int l_poti_callback_dollarrecord(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->dgesture.touchId);
+    lua_pushnumber(L, event->dgesture.gestureId);
+    lua_pushnumber(L, event->dgesture.numFingers);
+    lua_pushnumber(L, event->dgesture.error);
+    lua_pushnumber(L, event->dgesture.x);
+    lua_pushnumber(L, event->dgesture.y);
+    poti_call("dgesture_record", 6, 0);
+    return 0;
+}
+
+int l_poti_callback_multigesture(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->mgesture.touchId);
+    lua_pushnumber(L, event->mgesture.numFingers);
+    lua_pushnumber(L, event->mgesture.x);
+    lua_pushnumber(L, event->mgesture.y);
+    lua_pushnumber(L, event->mgesture.dTheta);
+    lua_pushnumber(L, event->mgesture.dDist);
+    poti_call("mgesture", 6, 0);
+    return 0;
+}
+
+int l_poti_callback_clipboardupdate(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    poti_call("clipboard_update", 0, 0);
+    return 0;
+}
+
+int l_poti_callback_dropfile(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->drop.windowID);
+    lua_pushstring(L, event->drop.file);
+    poti_call("drop_file", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_droptext(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->drop.windowID);
+    lua_pushstring(L, event->drop.file);
+    poti_call("drop_text", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_dropbegin(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->drop.windowID);
+    poti_call("drop_begin", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_dropcomplete(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->drop.windowID);
+    poti_call("drop_complete", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_audiodevice(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->adevice.which);
+    lua_pushboolean(L, SDL_AUDIODEVICEREMOVED - event->type);
+    lua_pushboolean(L, event->adevice.iscapture);
+    poti_call("audio_device", 3, 0);
+    return 0;
+}
+
+static int poti_windowevent_null(lua_State* L) {
+    return 0;
+}
+
+static const lua_CFunction window_events[] = {
+    [SDL_WINDOWEVENT_NONE] = poti_windowevent_null,
+    [SDL_WINDOWEVENT_SHOWN] = l_poti_callback_window_shown,
+    [SDL_WINDOWEVENT_HIDDEN] = l_poti_callback_window_hidden,
+    [SDL_WINDOWEVENT_EXPOSED] = poti_windowevent_null,
+    [SDL_WINDOWEVENT_MOVED] = l_poti_callback_window_moved,
+    [SDL_WINDOWEVENT_RESIZED] = l_poti_callback_window_resized,
+    [SDL_WINDOWEVENT_SIZE_CHANGED] = l_poti_callback_window_resized,
+    [SDL_WINDOWEVENT_MINIMIZED] = l_poti_callback_window_minimized,
+    [SDL_WINDOWEVENT_MAXIMIZED] = l_poti_callback_window_maximized,
+    [SDL_WINDOWEVENT_RESTORED] = l_poti_callback_window_restored,
+    [SDL_WINDOWEVENT_ENTER] = l_poti_callback_window_mouse,
+    [SDL_WINDOWEVENT_LEAVE] = l_poti_callback_window_mouse,
+    [SDL_WINDOWEVENT_FOCUS_GAINED] = l_poti_callback_window_focus,
+    [SDL_WINDOWEVENT_FOCUS_LOST] = l_poti_callback_window_focus,
+    [SDL_WINDOWEVENT_CLOSE] = poti_windowevent_null,
+    [SDL_WINDOWEVENT_TAKE_FOCUS] = poti_windowevent_null,
+    [SDL_WINDOWEVENT_HIT_TEST] = poti_windowevent_null,
+};
+
+int l_poti_callback_windowevent(lua_State *L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    window_events[event->window.event](L);
+    return 0;
+}
+
+int l_poti_callback_window_moved(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    lua_pushnumber(L, event->window.data1);
+    lua_pushnumber(L, event->window.data2);
+    poti_call("window_moved", 3, 0);
+    return 0;
+}
+
+int l_poti_callback_window_resized(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    lua_pushnumber(L, event->window.data1);
+    lua_pushnumber(L, event->window.data2);
+    poti_call("window_resized", 3, 0);
+    return 0;
+}
+
+int l_poti_callback_window_minimized(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    poti_call("window_minimized", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_window_maximized(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    poti_call("window_maximized", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_window_restored(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    poti_call("window_restored", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_window_shown(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    poti_call("window_shown", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_window_hidden(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    poti_call("window_hidden", 1, 0);
+    return 0;
+}
+
+int l_poti_callback_window_mouse(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    lua_pushboolean(L, SDL_WINDOWEVENT_LEAVE - event->window.event);
+    poti_call("window_mouse", 2, 0);
+    return 0;
+}
+
+int l_poti_callback_window_focus(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->window.windowID);
+    lua_pushboolean(L, SDL_WINDOWEVENT_FOCUS_LOST - event->window.event);
+    poti_call("window_focus", 2, 0);
+    return 0;
+}
+
+int l_poti_callback_textinput(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->text.windowID);
+    lua_pushstring(L, event->text.text);
+    poti_call("text_input", 2, 0);
+    return 0;
+}
+
+int l_poti_callback_textediting(lua_State* L) {
+    SDL_Event *event = lua_touserdata(L, 1);
+    lua_pushnumber(L, event->edit.windowID);
+    lua_pushstring(L, event->edit.text);
+    lua_pushnumber(L, event->edit.start);
+    lua_pushnumber(L, event->edit.length);
+    poti_call("text_edit", 4, 0);
     return 0;
 }
 
@@ -961,13 +1119,13 @@ int poti_textinput_rect(lua_State* L) {
 
 int luaopen_texture(lua_State *L) {
     luaL_Reg reg[] = {
-        {"draw", poti_texture_draw},
+        {"draw", l_poti_texture_draw},
         {"filter", NULL},
         {"wrap", NULL},
-        {"width", poti_texture_width},
-        {"height", poti_texture_height},
-        {"size", poti_texture_size},
-        {"__gc", poti_texture__gc},
+        {"width", l_poti_texture_width},
+        {"height", l_poti_texture_height},
+        {"size", l_poti_texture_size},
+        {"__gc", l_poti_texture__gc},
         {NULL, NULL}
     };
 
@@ -994,7 +1152,7 @@ static int _textype_from_string(lua_State *L, const char *name) {
 
 static int _texture_from_path(lua_State *L, Texture **tex) {
     size_t size;
-    int top = lua_gettop(L)-1;
+    // int top = lua_gettop(L)-1;
     const char *path = luaL_checklstring(L, 1, &size);
 
     int w, h, format, req_format;
@@ -1018,13 +1176,17 @@ static int _texture_from_path(lua_State *L, Texture **tex) {
     // sbtar_data(tar, img, header.size);
 
     size_t fsize;
-    char *img = poti()->read_file(path, &fsize);
+    u8 *img = (u8*)poti()->read_file(path, &fsize);
     if (!img) {
-        fprintf(stderr, "Failed to open image %s\n", path);
-        exit(1);
+        int len = strlen(path) + 50;
+        char err[len];
+        sprintf(err, "failed to open image: %s\n", path);
+        lua_pushstring(L, err);
+        lua_error(L);
+        return 1;
     }
 
-    unsigned char *pixels = stbi_load_from_memory(img, fsize, &w, &h, &format, req_format);
+    u8 *pixels = stbi_load_from_memory(img, fsize, &w, &h, &format, req_format);
     int pixel_format = SDL_PIXELFORMAT_RGBA32;
     switch (req_format) {
         case STBI_rgb: pixel_format = SDL_PIXELFORMAT_RGB888; break;
@@ -1039,8 +1201,11 @@ static int _texture_from_path(lua_State *L, Texture **tex) {
     free(img);
     // *tex = tea_texture_load(path, usage);
     if (!*tex) {
-        fprintf(stderr, "Failed to load texture: %s\n", SDL_GetError());
-        exit(0);
+        lua_pushstring(L, "Failed to create SDL texture: ");
+        lua_pushstring(L, SDL_GetError());
+        lua_concat(L, 2);
+        lua_error(L);
+        return 1;
     }
 
     return 1;
@@ -1067,7 +1232,7 @@ static int _texture_from_size(lua_State *L, Texture **tex) {
     return 1;
 }
 
-int poti_new_texture(lua_State *L) {
+int l_poti_new_texture(lua_State *L) {
     Texture **tex = lua_newuserdata(L, sizeof(*tex));
     luaL_setmetatable(L, TEXTURE_CLASS);
 
@@ -1079,7 +1244,7 @@ int poti_new_texture(lua_State *L) {
     return 1;
 }
 
-int get_rect_from_table(lua_State *L, int index, SDL_Rect *r) {
+int s_get_rect_from_table(lua_State *L, int index, SDL_Rect *r) {
     if (!lua_istable(L, index)) return 0;
     int parts[4] = {r->x, r->y, r->w, r->h};
 
@@ -1101,7 +1266,7 @@ int get_rect_from_table(lua_State *L, int index, SDL_Rect *r) {
     return 1;
 }
 
-int get_point_from_table(lua_State *L, int index, SDL_Point *p) {
+int s_get_point_from_table(lua_State *L, int index, SDL_Point *p) {
     if (!lua_istable(L, index)) return 0;
     int parts[2] = { p->x, p->y };
     size_t len = lua_rawlen(L, index);
@@ -1136,25 +1301,25 @@ static int get_flip_from_table(lua_State *L, int index, int *flip) {
 }
 
 
-int poti_texture_draw(lua_State *L) {
+int l_poti_texture_draw(lua_State *L) {
     Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
     int index = 2;
-    int offset = 0;
-    int top = lua_gettop(L);
+    // int offset = 0;
+    // int top = lua_gettop(L);
     // if (top < 2) tea_texture_draw(*tex, NULL, NULL);
     int w, h;
     SDL_QueryTexture(*tex, NULL, NULL, &w, &h);
 
     SDL_Rect s = {0, 0, w, h};
-    get_rect_from_table(L, index++, &s);
+    s_get_rect_from_table(L, index++, &s);
     SDL_Rect d = { 0, 0, s.w, s.h };
-    get_rect_from_table(L, index++, &d);
+    s_get_rect_from_table(L, index++, &d);
 
     if (index > 3) {
         float angle = luaL_optnumber(L, index++, 0);
 
         SDL_Point origin = {0, 0};
-        get_point_from_table(L, index++, &origin);
+        s_get_point_from_table(L, index++, &origin);
 
         int flip = SDL_FLIP_NONE;
         get_flip_from_table(L, index++, &flip);
@@ -1167,7 +1332,7 @@ int poti_texture_draw(lua_State *L) {
     return 0;
 }
 
-int poti_texture_width(lua_State *L) {
+int l_poti_texture_width(lua_State *L) {
     Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
 
     int width;
@@ -1177,7 +1342,7 @@ int poti_texture_width(lua_State *L) {
     return 1;
 }
 
-int poti_texture_height(lua_State *L) {
+int l_poti_texture_height(lua_State *L) {
     Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
 
     int height;
@@ -1187,7 +1352,7 @@ int poti_texture_height(lua_State *L) {
     return 1;
 }
 
-int poti_texture_size(lua_State *L) {
+int l_poti_texture_size(lua_State *L) {
     Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
 
     int width, height;
@@ -1198,7 +1363,7 @@ int poti_texture_size(lua_State *L) {
     return 2;
 }
 
-int poti_texture__gc(lua_State *L) {
+int l_poti_texture__gc(lua_State *L) {
     return 0;
 }
 
@@ -1208,8 +1373,8 @@ int poti_texture__gc(lua_State *L) {
 
 int luaopen_font(lua_State *L) {
     luaL_Reg reg[] = {
-        {"print", poti_font_print},
-        {"__gc", poti_font__gc},
+        {"print", l_poti_font_print},
+        {"__gc", l_poti_font__gc},
         {NULL, NULL}   
     };
 
@@ -1221,7 +1386,7 @@ int luaopen_font(lua_State *L) {
     return 1;
 }
 
-int poti_new_font(lua_State *L) {
+int l_poti_new_font(lua_State *L) {
    const char *path = luaL_checkstring(L, 1); 
    int size = luaL_optnumber(L, 2, 16);
 
@@ -1236,19 +1401,41 @@ int poti_new_font(lua_State *L) {
    return 1;
 }
 
-int poti_font_print(lua_State *L) {
-    // te_font_t **font = luaL_checkudata(L, 1, FONT_CLASS);
-    // const char *text = luaL_optstring(L, 2, "");
-    float x, y;
-    x = luaL_optnumber(L, 3, 0);
-    y = luaL_optnumber(L, 4, 0);
+int l_poti_font_print(lua_State *L) {
+    int index = 1;
+    Font *font = luaL_checkudata(L, index++, FONT_CLASS);
+    if (!font) {
+        font = &poti()->default_font;
+        --index;
+    }
 
-    // tea_font_print(*font, text, x, y);
+    const i8 *text = luaL_checkstring(L, index++);
+    float x, y;
+    x = luaL_optnumber(L, index++, 0);
+    y = luaL_optnumber(L, index++, 0);
+
+    u8 *p = (u8*)text;
+
+    float x0 = 0, y0 = 0;
+    while (*p) {
+        int codepoint;
+        p = poti()->utf8_codepoint(p, &codepoint);
+        SDL_Rect src, dest;
+        SDL_Point pos;
+        s_char_rect(font, codepoint, &x0, &y0, &pos, &src, 0);
+        dest.x = x + pos.x;
+        dest.y = y + pos.y;
+        dest.w = src.w;
+        dest.h = src.h;
+        SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
+    }
+
+    return 0;
 
     return 0;
 }
 
-int poti_font__gc(lua_State *L) {
+int l_poti_font__gc(lua_State *L) {
     // te_font_t **font = luaL_checkudata(L, 1, FONT_CLASS);
     // tea_destroy_font(*font);
     return 0;
@@ -1260,13 +1447,13 @@ int poti_font__gc(lua_State *L) {
 
 int luaopen_audio(lua_State *L) {
     luaL_Reg reg[] = {
-        {"play", poti_audio_play},
-        {"stop", poti_audio_stop},
-        {"pause", poti_audio_pause},
-        {"playing", poti_audio_playing},
-        {"volume", poti_audio_volume},
-        {"pitch", poti_audio_pitch},
-        {"__gc", poti_audio__gc},
+        {"play", l_poti_audio_play},
+        {"stop", l_poti_audio_stop},
+        {"pause", l_poti_audio_pause},
+        {"playing", l_poti_audio_playing},
+        {"volume", l_poti_audio_volume},
+        {"pitch", l_poti_audio_pitch},
+        {"__gc", l_poti_audio__gc},
         {NULL, NULL}
     };
 
@@ -1278,7 +1465,7 @@ int luaopen_audio(lua_State *L) {
     return 1;
 }
 
-int poti_new_audio(lua_State *L) {
+int l_poti_new_audio(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     const char *s_usage = luaL_optstring(L, 1, "stream");
 
@@ -1301,40 +1488,40 @@ int poti_volume(lua_State *L) {
     return 0;
 }
 
-int poti_audio_play(lua_State *L) {
+int l_poti_audio_play(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     mo_play(*buf);
     return 0;
 }
 
-int poti_audio_stop(lua_State *L) {
+int l_poti_audio_stop(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     mo_stop(*buf);
     return 0;
 }
 
-int poti_audio_pause(lua_State *L) {
+int l_poti_audio_pause(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     mo_pause(*buf);
     return 0;
 }
 
-int poti_audio_playing(lua_State *L) {
+int l_poti_audio_playing(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     lua_pushboolean(L, mo_is_playing(*buf));
     return 1;
 }
 
-int poti_audio_volume(lua_State *L) {
+int l_poti_audio_volume(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     float volume = luaL_optnumber(L, 2, 0);
     mo_volume(*buf, volume);
     return 0;
 }
 
-int poti_audio_pitch(lua_State *L) { return 0; }
+int l_poti_audio_pitch(lua_State *L) { return 0; }
 
-int poti_audio__gc(lua_State *L) {
+int l_poti_audio__gc(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     mo_audio_destroy(*buf); 
     return 0;
@@ -1344,7 +1531,7 @@ int poti_audio__gc(lua_State *L) {
  * Draw
  *********************************/
 
-int poti_clear(lua_State *L) {
+int l_poti_clear(lua_State *L) {
     color_t color = {0, 0, 0, 255};
     int args = lua_gettop(L);
 
@@ -1357,7 +1544,7 @@ int poti_clear(lua_State *L) {
     return 0;
 }
 
-int poti_mode(lua_State *L) {
+int l_poti_mode(lua_State *L) {
     const char *mode_str = luaL_checkstring(L, 1);
     int mode = 0;
     if (!strcmp(mode_str, "line")) mode = 0;
@@ -1366,7 +1553,7 @@ int poti_mode(lua_State *L) {
     return 0;
 }
 
-int poti_color(lua_State *L) {
+int l_poti_color(lua_State *L) {
     int args = lua_gettop(L);
 
     color_t col = {0, 0, 0, 255};
@@ -1379,7 +1566,7 @@ int poti_color(lua_State *L) {
     return 0;
 }
 
-int poti_set_target(lua_State *L) {
+int l_poti_set_target(lua_State *L) {
     Texture **tex = luaL_testudata(L, 1, TEXTURE_CLASS);
     Texture *t = NULL;
     if (tex) t = *tex;
@@ -1388,7 +1575,7 @@ int poti_set_target(lua_State *L) {
     return 0;
 }
 
-int poti_draw_point(lua_State *L) {
+int l_poti_draw_point(lua_State *L) {
     float x, y;
     x = luaL_checknumber(L, 1);
     y = luaL_checknumber(L, 2);
@@ -1397,7 +1584,7 @@ int poti_draw_point(lua_State *L) {
     return 0;
 }
 
-int poti_draw_line(lua_State *L) {
+int l_poti_draw_line(lua_State *L) {
     float p[4];
 
     for (int i = 0; i < 4; i++) {
@@ -1463,7 +1650,7 @@ static void draw_lined_circle(float xc, float yc, float radius, int segments) {
     }
 }
 
-int poti_draw_circle(lua_State *L) {
+int l_poti_draw_circle(lua_State *L) {
 
     float x, y;
     x = luaL_checknumber(L, 1);
@@ -1478,7 +1665,7 @@ int poti_draw_circle(lua_State *L) {
         draw_filled_circle
     };
 
-    fn[poti()->draw_mode](x, y, radius, segments);
+    fn[(int)poti()->draw_mode](x, y, radius, segments);
 
     return 0;
 }
@@ -1493,7 +1680,7 @@ static void draw_lined_rect(SDL_Rect *r) {
     SDL_RenderDrawRect(poti()->render, r);
 }
 
-int poti_draw_rectangle(lua_State *L) {
+int l_poti_draw_rectangle(lua_State *L) {
 
     SDL_Rect r = {0, 0, 0, 0};
 
@@ -1507,7 +1694,7 @@ int poti_draw_rectangle(lua_State *L) {
         draw_filled_rect
     };
 
-    fn[poti()->draw_mode](&r);
+    fn[(int)poti()->draw_mode](&r);
     
     return 0;
 }
@@ -1579,7 +1766,7 @@ static void draw_lined_triangle(float x0, float y0, float x1, float y1, float x2
     SDL_RenderDrawLine(poti()->render, x2, y2, x0, y0);
 }
 
-int poti_draw_triangle(lua_State *L) {
+int l_poti_draw_triangle(lua_State *L) {
 
     float points[6];
 
@@ -1592,12 +1779,12 @@ int poti_draw_triangle(lua_State *L) {
         draw_filled_triangle
     };
 
-    fn[poti()->draw_mode](points[0], points[1], points[2], points[3], points[4], points[5]);
+    fn[(int)poti()->draw_mode](points[0], points[1], points[2], points[3], points[4], points[5]);
 
     return 0;
 }
 
-static void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SDL_Rect *rect, int width) {
+void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SDL_Rect *rect, int width) {
     if (c == '\n') {
         *x = 0;
         *y += font->height;
@@ -1615,8 +1802,6 @@ static void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_
 
     float x2 = *x + font->c[c].bl;
     float y2 = *y + font->c[c].bt;
-    float w = font->c[c].bw;
-    float h = font->c[c].bh;
 
     float s0 = font->c[c].tx;
     float t0 = 0;
@@ -1633,7 +1818,7 @@ static void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_
     if (rect) *rect = (SDL_Rect){s0, t0, s1, t1};
 }
 
-int poti_print(lua_State *L) {
+int l_poti_print(lua_State *L) {
     int index = 1;
     Font *font = luaL_testudata(L, index++, FONT_CLASS);
     if (!font) {
@@ -1646,7 +1831,6 @@ int poti_print(lua_State *L) {
     x = luaL_optnumber(L, index++, 0);
     y = luaL_optnumber(L, index++, 0);
 
-    int len = strlen(text);
     u8 *p = (u8*)text;
 
     float x0 = 0, y0 = 0;
@@ -1672,8 +1856,8 @@ int poti_print(lua_State *L) {
 
 int luaopen_keyboard(lua_State *L) {
     luaL_Reg reg[] = {
-        {"down", poti_keyboard_down},
-        {"up", poti_keyboard_up},
+        {"down", l_poti_printdown},
+        {"up", l_poti_printup},
         //{"pressed", poti_key_pressed},
         //{"released", poti_key_released},
         {NULL, NULL}
@@ -1684,11 +1868,9 @@ int luaopen_keyboard(lua_State *L) {
 
 int luaopen_mouse(lua_State *L) {
     luaL_Reg reg[] = {
-        {"pos", poti_mouse_pos},
-        {"down", poti_mouse_down},
-        {"up", poti_mouse_up},
-        //{"pressed", poti_mouse_pressed},
-        //{"released", poti_mouse_released},
+        {"pos", l_poti_mouse_pos},
+        {"down", l_poti_mouse_down},
+        {"up", l_poti_mouse_up},
         {NULL, NULL}
     };
     luaL_newlib(L, reg);
@@ -1697,22 +1879,22 @@ int luaopen_mouse(lua_State *L) {
 
 int luaopen_joystick(lua_State *L) {
     luaL_Reg reg[] = {
-        {"num_axes", poti_joystick_num_axes},
-        {"num_hats", poti_joystick_num_hats},
-        {"num_balls", poti_joystick_num_balls},
-        {"num_buttons", poti_joystick_num_buttons},
-        {"axis", poti_joystick_axis},
-        {"button", poti_joystick_button},
-        {"hat", poti_joystick_hat},
-        {"ball", poti_joystick_ball},
-        {"name", poti_joystick_name},
-        {"vendor", poti_joystick_vendor},
-        {"product", poti_joystick_product},
-        {"product_version", poti_joystick_product_version},
-        {"type", poti_joystick_type},
-        {"rumble", poti_joystick_rumble},
-        {"powerlevel", poti_joystick_powerlevel},
-        {"__gc", poti_joystick__gc},
+        {"num_axes", l_poti_joystick_num_axes},
+        {"num_hats", l_poti_joystick_num_hats},
+        {"num_balls", l_poti_joystick_num_balls},
+        {"num_buttons", l_poti_joystick_num_buttons},
+        {"axis", l_poti_joystick_axis},
+        {"button", l_poti_joystick_button},
+        {"hat", l_poti_joystick_hat},
+        {"ball", l_poti_joystick_ball},
+        {"name", l_poti_joystick_name},
+        {"vendor", l_poti_joystick_vendor},
+        {"product", l_poti_joystick_product},
+        {"product_version", l_poti_joystick_product_version},
+        {"type", l_poti_joystick_type},
+        {"rumble", l_poti_joystick_rumble},
+        {"powerlevel", l_poti_joystick_powerlevel},
+        {"__gc", l_poti_joystick__gc},
         {NULL, NULL}
     };
     luaL_newmetatable(L, JOYSTICK_CLASS);
@@ -1725,15 +1907,15 @@ int luaopen_joystick(lua_State *L) {
 
 int luaopen_gamepad(lua_State *L) {
     luaL_Reg reg[] = {
-        {"axis", poti_gamepad_axis},
-        {"button", poti_gamepad_button},
-        {"name", poti_gamepad_name},
-        {"vendor", poti_gamepad_vendor},
-        {"product", poti_gamepad_product},
-        {"product_version", poti_gamepad_product_version},
-        {"rumble", poti_gamepad_rumble},
-        // {"powerlevel", poti_gamepad_powerlevel},
-        {"__gc", poti_gamepad__gc},
+        {"axis", l_poti_gamepad_axis},
+        {"button", l_poti_gamepad_button},
+        {"name", l_poti_gamepad_name},
+        {"vendor", l_poti_gamepad_vendor},
+        {"product", l_poti_gamepad_product},
+        {"product_version", l_poti_gamepad_product_version},
+        {"rumble", l_poti_gamepad_rumble},
+        // {"powerlevel", l_poti_gamepad_powerlevel},
+        {"__gc", l_poti_gamepad__gc},
         {NULL, NULL}
     };
     luaL_newmetatable(L, GAMEPAD_CLASS);
@@ -1744,7 +1926,7 @@ int luaopen_gamepad(lua_State *L) {
     return 1;
 }
 
-int poti_keyboard_down(lua_State *L) {
+int l_poti_printdown(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
 
     int code = SDL_GetScancodeFromName(key);
@@ -1753,7 +1935,7 @@ int poti_keyboard_down(lua_State *L) {
     return 1;
 }
 
-int poti_keyboard_up(lua_State *L) {
+int l_poti_printup(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
 
     int code = SDL_GetScancodeFromName(key);
@@ -1780,7 +1962,7 @@ int poti_key_released(lua_State *L) {
     return 1;
 }
 
-int poti_mouse_pos(lua_State *L) {
+int l_poti_mouse_pos(lua_State *L) {
     int x, y;
     SDL_GetMouseState(&x, &y);
 
@@ -1793,7 +1975,7 @@ static int mouse_down(int btn) {
     return SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(btn);
 }
 
-int poti_mouse_down(lua_State *L) {
+int l_poti_mouse_down(lua_State *L) {
     int button = luaL_checknumber(L, 1);
 
     lua_pushboolean(L, mouse_down(button));
@@ -1801,21 +1983,21 @@ int poti_mouse_down(lua_State *L) {
     return 1;
 }
 
-int poti_mouse_up(lua_State *L) {
+int l_poti_mouse_up(lua_State *L) {
     int button = luaL_checknumber(L, 1) - 1;
     lua_pushboolean(L, !mouse_down(button));
     
     return 1;
 }
 
-int poti_mouse_pressed(lua_State *L) {
+int l_poti_mouse_pressed(lua_State *L) {
     int button = luaL_checknumber(L, 1) - 1;
     lua_pushboolean(L, mouse_down(button));
     
     return 1;
 }
 
-int poti_mouse_released(lua_State *L) {
+int l_poti_mouse_released(lua_State *L) {
     int button = luaL_checknumber(L, 1) - 1;
     lua_pushboolean(L, !mouse_down(button));
     
@@ -1837,25 +2019,25 @@ int poti_num_joysticks(lua_State *L) {
     return 1;
 }
 
-int poti_joystick_name(lua_State *L) {
+int l_poti_joystick_name(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushstring(L, SDL_JoystickName(*j));
     return 1;
 }
 
-int poti_joystick_vendor(lua_State *L) {
+int l_poti_joystick_vendor(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushnumber(L, SDL_JoystickGetVendor(*j));
     return 1;
 }
 
-int poti_joystick_product(lua_State *L) {
+int l_poti_joystick_product(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushnumber(L, SDL_JoystickGetProduct(*j));
     return 1;
 }
 
-int poti_joystick_product_version(lua_State *L) {
+int l_poti_joystick_product_version(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushnumber(L, SDL_JoystickGetProductVersion(*j));
     return 1;
@@ -1874,44 +2056,44 @@ const char *joy_types[] = {
     [SDL_JOYSTICK_TYPE_THROTTLE] = "throttle",
 };
 
-int poti_joystick_type(lua_State *L) {
+int l_poti_joystick_type(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushstring(L, joy_types[SDL_JoystickGetType(*j)]);
     return 1;
 }
 
 
-int poti_joystick_num_axes(lua_State *L) {
+int l_poti_joystick_num_axes(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushnumber(L, SDL_JoystickNumAxes(*j));
     return 1;
 }
 
-int poti_joystick_num_balls(lua_State *L) {
+int l_poti_joystick_num_balls(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushnumber(L, SDL_JoystickNumBalls(*j));
     return 1;
 }
 
-int poti_joystick_num_hats(lua_State *L) {
+int l_poti_joystick_num_hats(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushnumber(L, SDL_JoystickNumHats(*j));
     return 1;
 }
 
-int poti_joystick_num_buttons(lua_State *L) {
+int l_poti_joystick_num_buttons(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushnumber(L, SDL_JoystickNumButtons(*j));
     return 1;
 }
-int poti_joystick_axis(lua_State *L) {
+int l_poti_joystick_axis(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     int axis = luaL_checknumber(L, 2);
     lua_pushnumber(L, SDL_JoystickGetAxis(*j, axis));
     return 1;
 }
 
-int poti_joystick_ball(lua_State *L) {
+int l_poti_joystick_ball(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     int ball = luaL_checknumber(L, 2);
     int dx, dy;
@@ -1921,14 +2103,14 @@ int poti_joystick_ball(lua_State *L) {
     return 2;
 }
 
-int poti_joystick_hat(lua_State *L) {
+int l_poti_joystick_hat(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     int hat = luaL_checknumber(L, 2);
     lua_pushnumber(L, SDL_JoystickGetHat(*j, hat));
     return 1;
 }
 
-int poti_joystick_button(lua_State* L) {
+int l_poti_joystick_button(lua_State* L) {
     Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     int button = luaL_checknumber(L, 2);
     int res = SDL_JoystickGetButton(*j, button);
@@ -1937,7 +2119,7 @@ int poti_joystick_button(lua_State* L) {
     return 1;
 }
 
-int poti_joystick_rumble(lua_State *L) {
+int l_poti_joystick_rumble(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     u16 low = luaL_checknumber(L, 2);
     u16 high = luaL_checknumber(L, 3);
@@ -1950,56 +2132,57 @@ const char *joy_powerlevels[] = {
     "unknown", "empty", "low", "medium", "high", "full", "wired"
 };
 
-int poti_joystick_powerlevel(lua_State *L) {
+int l_poti_joystick_powerlevel(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
     lua_pushstring(L, joy_powerlevels[SDL_JoystickCurrentPowerLevel(*j) + 1]);
     return 1;
 }
 
-int poti_joystick_close(lua_State *L) {
+int l_poti_joystick_close(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
-    SDL_JoystickClose(*j);
+    if (SDL_JoystickGetAttached(*j)) {
+        SDL_JoystickClose(*j);
+    }
     return 0;
 }
 
-int poti_joystick__gc(lua_State* L) {
-    Joystick** j = luaL_checkudata(L, 1, JOYSTICK_CLASS);
-    SDL_JoystickClose(*j);
+int l_poti_joystick__gc(lua_State* L) {
+    l_poti_joystick_close(L);
     return 0;
 }
 
 /* Game Controller */
-int poti_gamepad(lua_State *L) {
+int l_poti_gamepad(lua_State *L) {
     GameController **g = lua_newuserdata(L, sizeof(*g));
     *g = SDL_GameControllerOpen(luaL_checknumber(L, 1));
     luaL_setmetatable(L, GAMEPAD_CLASS);
     return 1;
 }
 
-int poti_is_gamepad(lua_State *L) {
+int l_poti_is_gamepad(lua_State *L) {
     lua_pushboolean(L, SDL_IsGameController(luaL_checknumber(L, 1)));
     return 1;
 }
 
-int poti_gamepad_name(lua_State *L) {
+int l_poti_gamepad_name(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
     lua_pushstring(L, SDL_GameControllerName(*g));
     return 1;
 }
 
-int poti_gamepad_vendor(lua_State *L) {
+int l_poti_gamepad_vendor(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
     lua_pushnumber(L, SDL_GameControllerGetVendor(*g));
     return 1;
 }
 
-int poti_gamepad_product(lua_State *L) {
+int l_poti_gamepad_product(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
     lua_pushnumber(L, SDL_GameControllerGetProduct(*g));
     return 1;
 }
 
-int poti_gamepad_product_version(lua_State *L) {
+int l_poti_gamepad_product_version(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
     lua_pushnumber(L, SDL_GameControllerGetProductVersion(*g));
     return 1;
@@ -2009,7 +2192,7 @@ const char *gpad_axes[] = {
     "leftx", "lefty", "rightx", "righty", "triggerleft", "triggerright"
 };
 
-int poti_gamepad_axis(lua_State *L) {
+int l_poti_gamepad_axis(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
     const char *str = luaL_checkstring(L, 2);
     int axis = SDL_GameControllerGetAxisFromString(str);
@@ -2020,7 +2203,7 @@ int poti_gamepad_axis(lua_State *L) {
     return 1;
 }
 
-int poti_gamepad_button(lua_State *L) {
+int l_poti_gamepad_button(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
     const char *str = luaL_checkstring(L, 2);
     int button = SDL_GameControllerGetButtonFromString(str);
@@ -2031,7 +2214,7 @@ int poti_gamepad_button(lua_State *L) {
     return 1;
 }
 
-int poti_gamepad_rumble(lua_State *L) {
+int l_poti_gamepad_rumble(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
     u16 low = luaL_checknumber(L, 2);
     u16 high = luaL_checknumber(L, 3);
@@ -2040,15 +2223,16 @@ int poti_gamepad_rumble(lua_State *L) {
     return 1;
 }
 
-int poti_gamepad_close(lua_State *L) {
+int l_poti_gamepad_close(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
-    SDL_GameControllerClose(*g);
+    if (SDL_GameControllerGetAttached(*g)) {
+        SDL_GameControllerClose(*g);
+    }
     return 0;
 }
 
-int poti_gamepad__gc(lua_State* L) {
-    GameController** g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
-    //SDL_GameControllerClose(*g);
+int l_poti_gamepad__gc(lua_State* L) {
+    l_poti_gamepad_close(L);
     return 0;
 }
 
@@ -2064,19 +2248,19 @@ static i8* s_read_file(const char *filename, size_t *size) {
     int sz = ftell(fp);
     if (size) *size = sz;
     fseek(fp, 0, SEEK_SET);
-    char *str = malloc(sz);
+    i8 *str = malloc(sz);
     fread(str, 1, sz, fp);
     fclose(fp);
 
     return str;
 }
 
-static i8* s_read_file_packed(const char *filename, size_t *size) {
+static i8* s_read_file_packed(const i8 *filename, size_t *size) {
     sbtar_t *tar = &poti()->pkg;
-    if (!sbtar_find(tar, filename)) return;
+    if (!sbtar_find(tar, filename)) return NULL;
     sbtar_header_t h;
     sbtar_header(tar, &h);
-    char *str = malloc(h.size);
+    i8 *str = malloc(h.size);
     if (size) *size = h.size;
     sbtar_data(tar, str, h.size);
 
@@ -2121,7 +2305,7 @@ static u8* s_utf8_codepoint(u8 *p, i32 *codepoint) {
     return n;
 }
 
-static int s_init_font(Font *font, const void *data, size_t buf_size, int font_size) {
+static i32 s_init_font(Font *font, const void *data, size_t buf_size, i32 font_size) {
     if (buf_size <= 0) return 0;
     font->data = malloc(buf_size);
     if (!font->data) {
@@ -2135,19 +2319,20 @@ static int s_init_font(Font *font, const void *data, size_t buf_size, int font_s
         exit(EXIT_FAILURE);
     }
 
-    int ascent, descent, line_gap;
+    i32 ascent, descent, line_gap;
     font->size = font_size;
-    float fsize = font_size;
+    f32 fsize = font_size;
     font->scale = stbtt_ScaleForMappingEmToPixels(&font->info, fsize);
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &line_gap);
     font->baseline = ascent * font->scale;
 
-    int tw = 0, th = 0;
+    i32 tw = 0, th = 0;
 
-    for (int i = 0; i < 256; i++) {
-        int ax, bl;
-        int x0, y0, x1, y1;
-        int w, h;
+    i32 i;
+    for (i = 0; i < 256; i++) {
+        i32 ax, bl;
+        i32 x0, y0, x1, y1;
+        i32 w, h;
 
         stbtt_GetCodepointHMetrics(&font->info, i, &ax, &bl);
         stbtt_GetCodepointBitmapBox(&font->info, i, font->scale, font->scale, &x0, &y0, &x1, &y1);
@@ -2204,6 +2389,7 @@ static int s_init_font(Font *font, const void *data, size_t buf_size, int font_s
     SDL_FreeSurface(surf);
     free(bitmap);
     font->tex = tex;
+    return 1;
 }
 
 static Font* s_load_font(const i8 *filename, i32 font_size) {
@@ -2224,6 +2410,7 @@ int s_setup_function_ptrs(struct Context *ctx) {
     if (poti()->is_packed)
         ctx->read_file = s_read_file_packed;
     ctx->init_font = s_init_font;
+    ctx->load_font = s_load_font;
     ctx->utf8_codepoint = s_utf8_codepoint;
 
     return 1;

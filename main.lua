@@ -11,22 +11,17 @@ local frames = {
     { 32, 0, 16, 16 },
     { 48, 0, 16, 16 }
 }
+local txt = ""
 
 function poti.load()
-    -- tex = poti.Texture("img.jpg")
-    joy = poti.Gamepad(0)
     canvas = poti.Texture(160, 95, "target")
-    -- audio = poti.Audio("som.wav")
-    -- font = poti.Font("pixelart.ttf", 8)
-    print(font)
-    joy:rumble(2500, 5000, 5000)
-    -- print("is gamepad", poti.is_gamepad(0))
+    img = poti.Texture('img.png')
 end
 
 function poti.update(dt)
-    if poti.key_down('right') then
+    if poti.keyboard.down('right') then
         x = x + (80 * dt)
-    elseif poti.key_down('left') then
+    elseif poti.keyboard.down('left') then
         x = x - (80 * dt)
     end
     ang = ang + dt*15
@@ -36,20 +31,25 @@ function poti.update(dt)
         frame = frame + 1
         if frame > #frames then frame = 1 end
     end
-    x = x + (joy:axis("leftx") / 32767)
-    y = y + (joy:axis("lefty") / 32767)
-    if joy:button("a") then
-        print("A")
-    elseif joy:button("b") then
-        print("B")
-    end
 end
 
 function poti.draw()
     poti.clear()
     poti.color(255, 255, 255)
     poti.print("testando pra ver se vai")
-    poti.print(joy:name(), 0, 12)
+    poti.print(txt, 0, 12)
 
     poti.circle(x, y, 10)
+end
+
+function poti.text_input(wid, text)
+    txt = txt .. text
+end
+
+function poti.key_pressed(key)
+    if key == 'backspace' then
+        txt = txt:sub(1, -2)
+    elseif key == 'return' then
+        txt = txt .. "\n"
+    end
 end
