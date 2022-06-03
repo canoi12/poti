@@ -128,10 +128,15 @@ struct Context {
 
 struct Context _ctx;
 static const i8 _callbacks;
+static const i8 _poti_step;
+
 static const i8 *_err_func =
 "function poti.error(msg, trace)\n"
+"   local trace = debug.traceback('', 1)\n"
+"   "
 "    poti.update = function() end\n"
 "    poti.draw = function()\n"
+"       poti.clear(0, 0, 0)\n"
 "        poti.print('error', 32)\n"
 "        poti.print(msg, 32, 16)\n"
 "        poti.print(trace, 32, 32)\n"
@@ -145,65 +150,34 @@ static const i8 *_err_func =
 "end\n"
 "return _err";
 
-static const i8 *boot_lua = "local traceback = debug.traceback\n"
-"package.path = package.path .. ';core/?.lua;core/?/init.lua'\n"
+static const i8 *_initialize =
+"local traceback = debug.traceback\n"
+"local main_state = false\n"
 "local function _err(msg)\n"
 "   local trace = traceback('', 1)\n"
 "   print(msg, trace)\n"
 "   poti.error(msg, trace)\n"
 "end\n"
+"local function _mainLoop()\n"
+"   if poti.update then poti.update(poti.delta()) end\n"
+"   if poti.draw then poti.draw() end\n"
+"end\n"
+"local _step = _mainLoop\n"
 "function poti.run()\n"
 "   if poti.load then poti.load() end\n"
-"   return function()\n"
-"       dt = poti.delta()\n"
-"       if poti.update then poti.update(dt) end\n"
-"       if poti.draw then poti.draw() end\n"
-"   end\n"
+"   return _mainLoop\n"
+"end\n"
+"local function _initialize()\n"
+"   if not main_state then return function() xpcall(_step, _err) end end\n"
+"   local state, ret = xpcall(poti.run, _err)\n"
+"   if ret then _step = ret end\n"
+"   return function() xpcall(_step, _err) end\n"
 "end\n"
 "function poti.quit()\n"
 "   return true\n"
 "end\n"
-"xpcall(function() require 'main' end, _err)";
-
-static int l_poti_run(lua_State *L) {
-    lua_getglobal(L, "xpcall");
-    lua_rawgetp(L, LUA_REGISTRYINDEX, boot_lua);
-    lua_rawgetp(L, LUA_REGISTRYINDEX, _err_func);
-    lua_pcall(L, 2, 3, 0);
-    lua_pop(L, 3);
-}
-
-#if 0
-static const char *boot_lua = "local traceback = debug.traceback\n"
-"package.path = package.path .. ';core/?.lua;core/?/init.lua'\n"
-"local function _error(msg)\n"
-"    trace = traceback('', 1)\n"
-"    print(msg, trace)\n"
-"end\n"
-"local function _step()\n"
-"    local dt = poti.delta()\n"
-"    if poti.update then poti.update(dt) end\n"
-"    if poti.draw then poti.draw() end\n"
-"end\n"
-"function poti._load()\n"
-"    if poti.load then xpcall(poti.load, _error) end\n"
-"end\n"
-"function poti._step()\n"
-"    xpcall(_step, _error)\n"
-"end\n"
-"function poti.run()\n"
-"    local dt = poti.delta()\n"
-"    if poti.load then poti.load() end\n"
-"    while poti.running() do\n"
-"        if poti.update then poti.update(dt) end\n"
-"        if poti.draw then poti.draw() end\n"
-"    end\n"
-"    return 0\n"
-"end\n"
-"function poti.error()\n"
-"end\n"
-"xpcall(function() require 'main' end, _error)\n";
-#endif
+"main_state = xpcall(function() require 'main' end, _err)\n"
+"return _initialize";
 
 static int s_get_rect_from_table(lua_State* L, int idx, SDL_Rect* out);
 static int s_get_point_from_table(lua_State* L, int idx, SDL_Point* out);
@@ -214,7 +188,6 @@ static int poti_loop(void);
 static int poti_quit(void);
 
 static int poti_call(const char *name, int args, int ret);
-static int poti_error(const char *msg, const char *trace);
 
 static int luaopen_poti(lua_State *L);
 static int luaopen_event(lua_State *L);
@@ -231,7 +204,6 @@ static int luaopen_gamepad(lua_State *L);
  *=================================*/
 static int l_poti_ver(lua_State *L);
 static int l_poti_delta(lua_State *L);
-static int l_poti_error(lua_State *L);
 
 /*=================================*
  *              Event              *
@@ -350,8 +322,8 @@ static int l_poti_print(lua_State *L);
  *=================================*/
 
 /* Keyboard */
-static int l_poti_printdown(lua_State *L);
-static int l_poti_printup(lua_State *L);
+static int l_poti_keyboard_down(lua_State *L);
+static int l_poti_keyboard_up(lua_State *L);
 
 /* Mouse */
 static int l_poti_mouse_pos(lua_State *L);
@@ -400,25 +372,6 @@ static int s_setup_function_ptrs(struct Context *ctx);
 
 int poti_init(void) {
     poti()->L = luaL_newstate();
-
-#if 0
-    FILE *fp = fopen("boot.lua", "rb");
-    if (!fp) {
-        fprintf(stderr, "Failed to open boot.lua\n");
-        exit(0);
-    }
-
-    fseek(fp, 0, SEEK_END);
-    unsigned int sz = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    char buf[sz+1];
-    fread(buf, sz, 1, fp);
-    buf[sz] = '\0';
-
-    fclose(fp);
-#endif
-
     lua_State *L = poti()->L;
 
     luaL_openlibs(L);
@@ -459,54 +412,16 @@ int poti_init(void) {
         exit(0);
     }
     lua_rawsetp(L, LUA_REGISTRYINDEX, _err_func);
-#if 1
-    if (luaL_dostring(L, boot_lua) != LUA_OK) {
-	const char *error_buf = lua_tostring(L, -1);
-	fprintf(stderr, "Failed to load Lua boot: %s\n", error_buf);
-	exit(0);
-    }
-#else
-    luaL_dostring(L, buf);
-#endif
 
-#if 0
-    lua_getglobal(L, "poti");
-    if (!lua_isnil(L, -1)) {
-        lua_getfield(L, -1, "_load");
-        if (!lua_isnil(L, -1)) {
-            int err = lua_pcall(L, 0, 0, 0);
-            if (err) {
-                const char *str = lua_tostring(L, -1);
-                fprintf(stderr, "Lua error: %s", str);
-                exit(0);
-            }
-        }
-        lua_pop(L, 1);
-        lua_settop(L, 1);
+    if (luaL_dostring(L, _initialize) != LUA_OK) {
+	    const char *error_buf = lua_tostring(L, -1);
+	    fprintf(stderr, "Failed to load poti lua initialize: %s\n", error_buf);
+	    exit(0);
     }
-#endif
+    lua_pcall(L, 0, 1, 0);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &_poti_step);
 
-    lua_getglobal(L, "poti");
-    if (!lua_isnil(L, -1)) {
-        lua_getfield(L, -1, "run");
-        lua_remove(L, -2);
-        if (!lua_isnil(L, -1)) {
-            int err = lua_pcall(L, 0, 1, 0);
-            if (err) {
-                const char *str = lua_tostring(L, -1);
-                fprintf(stderr, "Lua error: %s", lua_tostring(L, -1));
-                lua_rawgetp(L, LUA_REGISTRYINDEX, _err_func);
-                lua_pushstring(L, str);
-                lua_pcall(L, 1, 0, 0);
-                luaL_loadstring(L, "return function()\n"
-                "    if poti.update then poti.update(poti.delta()) end\n"
-                "    if poti.draw then poti.draw() end\n"
-                "end");
-            }
-            lua_rawsetp(L, LUA_REGISTRYINDEX, boot_lua);
-        }
-    }
-    //fprintf(stderr, "Is Packed: %d\n", poti()->is_packed);
+    fprintf(stderr, "Is Packed: %d\n", poti()->is_packed);
     return 1;
 }
 
@@ -519,34 +434,7 @@ int poti_quit(void) {
     return 1;
 }
 
-static int _poti_step(lua_State *L) {
-#if 0
-    lua_getglobal(L, "poti");
-    if (!lua_isnil(L, -1)) {
-        lua_getfield(L, -1, "_step");
-        if (!lua_isnil(L, -1)) {
-            int err = lua_pcall(L, 0, 0, 0);
-            if (err) {
-                const char *str = lua_tostring(L, -1);
-                fprintf(stderr, "Lua error: %s", str);
-                exit(0);
-            }
-        }
-        lua_pop(L, 1);
-        lua_settop(L, 1);
-    }
-#endif
-    lua_rawgetp(L, LUA_REGISTRYINDEX, boot_lua);
-    if (lua_pcall(L, 0, 0, 0) != 0) {
-        const char *msg = lua_tostring(L, -1);
-        fprintf(stderr, "poti error: %s\n", msg);
-        exit(0);
-    }
-    return 1;
-}
-
 int poti_loop(void) {
-    char should_close = 0;
     SDL_Event *event = &poti()->event;
     double current_time;
     poti()->last_time = SDL_GetTicks();
@@ -557,18 +445,18 @@ int poti_loop(void) {
         lua_rawgetp(L, LUA_REGISTRYINDEX, &_callbacks);
         while (SDL_PollEvent(event)) {
             lua_rawgeti(L, -1, event->type);
-            // fprintf(stderr, "lua top: %d\n", lua_gettop(L));
-            // fprintf(stderr, "event: %d\n", event->type);
             if (!lua_isnil(L, -1)) {
                 lua_pushlightuserdata(L, event);
                 lua_pcall(L, 1, 0, 0);
             } else lua_pop(L, 1);
         }
+        lua_pop(L, 1);
         current_time = SDL_GetTicks();
         poti()->delta = (current_time - poti()->last_time) / 1000.f;
         poti()->last_time = current_time;
-       // _poti_step(poti()->L);
-       l_poti_run(L);
+
+        lua_rawgetp(L, LUA_REGISTRYINDEX, &_poti_step);
+        lua_pcall(L, 0, 0, 0);
 
         SDL_RenderPresent(poti()->render);
     }
@@ -694,6 +582,8 @@ int luaopen_event(lua_State *L) {
         {SDL_JOYHATMOTION, l_poti_callback_joyhatmotion},
         {SDL_JOYBUTTONDOWN, l_poti_callback_joybutton},
         {SDL_JOYBUTTONUP, l_poti_callback_joybutton},
+        {SDL_JOYDEVICEADDED, l_poti_callback_joydevice},
+        {SDL_JOYDEVICEREMOVED, l_poti_callback_joydevice},
         {SDL_CONTROLLERAXISMOTION, l_poti_callback_gamepadaxismotion},
         {SDL_CONTROLLERBUTTONDOWN, l_poti_callback_gamepadbutton},
         {SDL_CONTROLLERBUTTONUP, l_poti_callback_gamepadbutton},
@@ -755,7 +645,6 @@ int l_poti_textinput_rect(lua_State* L) {
 }
 
 int l_poti_callback_quit(lua_State* L) {
-    SDL_Event *event = lua_touserdata(L, 1);
     poti_call("quit", 0, 1);
     poti()->should_close = lua_toboolean(L, -1);
     lua_pop(L, 1);
@@ -952,8 +841,11 @@ int l_poti_callback_multigesture(lua_State* L) {
 }
 
 int l_poti_callback_clipboardupdate(lua_State* L) {
-    SDL_Event *event = lua_touserdata(L, 1);
-    poti_call("clipboard_update", 0, 0);
+    // SDL_Event *event = lua_touserdata(L, 1);
+    char *text = SDL_GetClipboardText();
+    lua_pushstring(L, text);
+    poti_call("clipboard_update", 1, 0);
+    SDL_free(text);
     return 0;
 }
 
@@ -1856,8 +1748,8 @@ int l_poti_print(lua_State *L) {
 
 int luaopen_keyboard(lua_State *L) {
     luaL_Reg reg[] = {
-        {"down", l_poti_printdown},
-        {"up", l_poti_printup},
+        {"down", l_poti_keyboard_down},
+        {"up", l_poti_keyboard_up},
         //{"pressed", poti_key_pressed},
         //{"released", poti_key_released},
         {NULL, NULL}
@@ -1926,7 +1818,7 @@ int luaopen_gamepad(lua_State *L) {
     return 1;
 }
 
-int l_poti_printdown(lua_State *L) {
+int l_poti_keyboard_down(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
 
     int code = SDL_GetScancodeFromName(key);
@@ -1935,7 +1827,7 @@ int l_poti_printdown(lua_State *L) {
     return 1;
 }
 
-int l_poti_printup(lua_State *L) {
+int l_poti_keyboard_up(lua_State *L) {
     const char *key = luaL_checkstring(L, 1);
 
     int code = SDL_GetScancodeFromName(key);
