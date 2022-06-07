@@ -13,5 +13,6 @@ poti
 cross
 *.dll
 *.ldtk
+*.bin
 VC
 external/SDL2

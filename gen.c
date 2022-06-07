@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
     fprintf(fp, "#ifndef POTI_H\n");
     fprintf(fp, "#define POTI_H\n");
     fprintf(fp, "\n");
-    new_file("5x5.ttf");
+    new_file("font.ttf");
     new_file("boot.lua");
     fprintf(fp, "\n");
     fprintf(fp, "#endif\n");

@@ -186,13 +186,12 @@ static const i8 _audio_data;
 static const i8 *_err_func =
 "function poti.error(msg, trace)\n"
 "   local trace = debug.traceback('', 1)\n"
-"   "
 "    poti.update = function() end\n"
 "    poti.draw = function()\n"
 "       poti.clear(0, 0, 0)\n"
-"        poti.print('error', 32)\n"
-"        poti.print(msg, 32, 16)\n"
-"        poti.print(trace, 32, 32)\n"
+"       poti.print('error', 32)\n"
+"       poti.print(msg, 32, 16)\n"
+"       poti.print(trace, 32, 32)\n"
 "    end\n"
 "end\n"
 "local function _err(msg)\n"
@@ -465,7 +464,7 @@ int poti_init(void) {
         poti()->is_packed = 1;
     s_setup_function_ptrs(poti());
 
-    poti()->init_font(&poti()->default_font, _5x5_ttf, _5x5_ttf_size, 10);
+    poti()->init_font(&poti()->default_font, _font_ttf, _font_ttf_size, 8);
 
     // mo_init(0);
     ma_context_config ctx_config = ma_context_config_init();
