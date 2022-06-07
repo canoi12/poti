@@ -7,7 +7,9 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
-#define POTI_VER "0.1.0"
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#endif
 
 #ifdef _WIN32
     #define SDL_MAIN_HANDLED
@@ -20,18 +22,16 @@
     #include <SDL2/SDL.h>
 #endif
 
-#include "mocha.h"
-
-#define STB_IMAGE_IMPLEMENTATION
+#include "miniaudio.h"
 #include "stb_image.h"
-
-#define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
-
-#define SBTAR_IMPLEMENTATION
 #include "sbtar.h"
 
 #include "poti.h"
+
+#define MAX_AUDIO_BUFFER_CHANNELS 255
+
+#define POTI_VER "0.1.0"
 
 #define POINT_CLASS "Point"
 #define RECT_CLASS "Rect"
@@ -46,6 +46,13 @@
 
 #define poti() (&_ctx)
 
+#define AUDIO_DEVICE_FORMAT ma_format_f32
+#define AUDIO_DEVICE_CHANNELS 2
+#define AUDIO_DEVICE_SAMPLE_RATE 44100
+
+#define AUDIO_STREAM 0
+#define AUDIO_STATIC 1
+
 typedef char i8;
 typedef unsigned char u8;
 typedef short i16;
@@ -59,9 +66,12 @@ typedef double f64;
 
 typedef u8 color_t[4];
 
+typedef struct Audio Audio;
+typedef struct AudioData AudioData;
+typedef struct AudioBuffer AudioBuffer;
+
 typedef SDL_Texture Texture;
 typedef struct Font Font;
-typedef mo_audio_t Audio;
 
 typedef SDL_Window Window;
 typedef SDL_Renderer Render;
@@ -71,6 +81,32 @@ typedef SDL_Joystick Joystick;
 typedef SDL_GameController GameController;
 typedef void Keyboard;
 typedef void Mouse;
+
+#ifndef ma_countof
+#define ma_countof(x)               (sizeof(x) / sizeof(x[0]))
+#endif
+
+struct AudioData {
+    u8 usage;
+    u32 size;
+    u8* data;
+};
+
+struct AudioBuffer {
+    u8 *data;
+    u16 id;
+    ma_decoder decoder;
+    f32 volume, pitch;
+    u8 playing, paused;
+    u8 loop, loaded;
+    i64 offset;
+    u8 usage;
+    u32 size;
+};
+
+struct Audio {
+    AudioData data;
+};
 
 struct Font {
     struct {
@@ -100,8 +136,24 @@ struct Context {
     Window *window;
     Render *render;
     Event event;
+
+    struct {
+        ma_context ctx;
+        ma_device device;
+        ma_mutex lock;
+
+        u8 is_ready;
+
+        AudioBuffer buffers[MAX_AUDIO_BUFFER_CHANNELS];
+    } audio;
     
     u8 should_close;
+
+    struct {
+        f64 last;
+        f64 delta;
+        i32 fps, frames;
+    } time;
 
     f64 last_time;
     f64 delta;
@@ -129,6 +181,7 @@ struct Context {
 struct Context _ctx;
 static const i8 _callbacks;
 static const i8 _poti_step;
+static const i8 _audio_data;
 
 static const i8 *_err_func =
 "function poti.error(msg, trace)\n"
@@ -182,6 +235,8 @@ static const i8 *_initialize =
 static int s_get_rect_from_table(lua_State* L, int idx, SDL_Rect* out);
 static int s_get_point_from_table(lua_State* L, int idx, SDL_Point* out);
 static void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SDL_Rect *rect, int width);
+static u32 s_read_and_mix_pcm_frames(AudioBuffer *buffer, f32 *output, u32 frames);
+static void s_audio_callback(ma_device *device, void *output, const void *input, ma_uint32 frameCount);
 
 static int poti_init(void);
 static int poti_loop(void);
@@ -236,6 +291,7 @@ static int l_poti_callback_gamepadremap(lua_State* L);
 static int l_poti_callback_gamepadtouchpad(lua_State* L);
 static int l_poti_callback_gamepadtouchpadmotion(lua_State* L);
 #endif
+
 static int l_poti_callback_finger(lua_State* L);
 static int l_poti_callback_fingermotion(lua_State* L);
 static int l_poti_callback_dollargesture(lua_State* L);
@@ -383,7 +439,14 @@ int poti_init(void) {
 #else
     sprintf(title, "poti %s", POTI_VER);
 #endif
-    if (SDL_Init(SDL_INIT_EVERYTHING)) {
+
+#ifdef __EMSCRIPTEN__
+    u32 flags = SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER |
+    SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_SENSOR;
+#else
+    u32 flags = SDL_INIT_EVERYTHING;
+#endif
+    if (SDL_Init(flags)) {
         fprintf(stderr, "Failed to init SDL2: %s\n", SDL_GetError());
         exit(0);
     }
@@ -404,7 +467,64 @@ int poti_init(void) {
 
     poti()->init_font(&poti()->default_font, _5x5_ttf, _5x5_ttf_size, 10);
 
-    mo_init(0);
+    // mo_init(0);
+    ma_context_config ctx_config = ma_context_config_init();
+    ma_result result = ma_context_init(NULL, 0, &ctx_config, &poti()->audio.ctx);
+    if (result != MA_SUCCESS) {
+        fprintf(stderr, "Failed to init audio context\n");
+        exit(0);
+    }
+
+    ma_device_config dev_config = ma_device_config_init(ma_device_type_playback);
+    dev_config.playback.pDeviceID = NULL;
+    dev_config.playback.format = AUDIO_DEVICE_FORMAT;
+    dev_config.playback.channels = AUDIO_DEVICE_CHANNELS;
+    dev_config.sampleRate = AUDIO_DEVICE_SAMPLE_RATE;
+    dev_config.pUserData = poti();
+    dev_config.dataCallback = s_audio_callback;
+
+    result = ma_device_init(&poti()->audio.ctx, &dev_config, &poti()->audio.device);
+    if (result != MA_SUCCESS) {
+        fprintf(stderr, "Failed to init audio device\n");
+        ma_context_uninit(&poti()->audio.ctx);
+        exit(0);
+    }
+
+    if (ma_device_start(&poti()->audio.device) != MA_SUCCESS) {
+        fprintf(stderr, "Failed to start audio device\n");
+        ma_context_uninit(&poti()->audio.ctx);
+        ma_device_uninit(&poti()->audio.device);
+        exit(0);
+    }
+
+    if (ma_mutex_init(&poti()->audio.ctx, &poti()->audio.lock) != MA_SUCCESS) {
+        fprintf(stderr, "Failed to start audio mutex\n");
+        ma_device_uninit(&poti()->audio.device);
+        ma_context_uninit(&poti()->audio.ctx);
+        exit(0);
+    }
+
+    i32 i;
+    for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        AudioBuffer *buffer = &poti()->audio.buffers[i];
+        memset(buffer, 0, sizeof(*buffer));
+        buffer->playing = 0;
+        buffer->volume = 1.f;
+        buffer->pitch = 1.f;
+        buffer->loaded = 0;
+        buffer->paused = 0;
+        buffer->loop = 0;
+    }
+
+    poti()->audio.is_ready = 1;
+
+    lua_newtable(L);
+    lua_newtable(L);
+    lua_rawseti(L, -2, AUDIO_STREAM);
+    lua_newtable(L);
+    lua_rawseti(L, -2, AUDIO_STATIC);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &_audio_data);
+
 
     if (luaL_dostring(L, _err_func) != LUA_OK) {
         const char *error_buf = lua_tostring(L, -1);
@@ -429,38 +549,46 @@ int poti_quit(void) {
     SDL_DestroyWindow(poti()->window);
     SDL_DestroyRenderer(poti()->render);
     SDL_Quit();
-    mo_deinit();
+    // mo_deinit();
+    if (poti()->audio.is_ready) {
+        ma_mutex_uninit(&poti()->audio.lock);
+        ma_device_uninit(&poti()->audio.device);
+        ma_context_uninit(&poti()->audio.ctx);
+    } else
+        fprintf(stderr, "Audio Module could not be closed, not initialized\n");
+
     lua_close(poti()->L);
     return 1;
 }
 
-int poti_loop(void) {
+int poti_step(void) {
+    lua_State *L = poti()->L;
     SDL_Event *event = &poti()->event;
-    double current_time;
-    poti()->last_time = SDL_GetTicks();
-    lua_State* L = poti()->L;
-    while (!poti()->should_close) {
-        SDL_Rect tr = { 0, 0, 320, 195 };
-        SDL_SetTextInputRect(&tr);
-        lua_rawgetp(L, LUA_REGISTRYINDEX, &_callbacks);
-        while (SDL_PollEvent(event)) {
-            lua_rawgeti(L, -1, event->type);
-            if (!lua_isnil(L, -1)) {
-                lua_pushlightuserdata(L, event);
-                lua_pcall(L, 1, 0, 0);
-            } else lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-        current_time = SDL_GetTicks();
-        poti()->delta = (current_time - poti()->last_time) / 1000.f;
-        poti()->last_time = current_time;
-
-        lua_rawgetp(L, LUA_REGISTRYINDEX, &_poti_step);
-        lua_pcall(L, 0, 0, 0);
-
-        SDL_RenderPresent(poti()->render);
+    lua_rawgetp(poti()->L, LUA_REGISTRYINDEX, &_callbacks);
+    while (SDL_PollEvent(event)) {
+        lua_rawgeti(L, -1, event->type);
+        if (!lua_isnil(L, -1)) {
+            lua_pushlightuserdata(L, event);
+            lua_pcall(L, 1, 0, 0);
+        } else lua_pop(L, 1);
     }
+    lua_pop(L, 1);
+    double current_time = SDL_GetTicks();
+    poti()->delta = (current_time - poti()->last_time) / 1000.f;
+    poti()->last_time = current_time;
 
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &_poti_step);
+    lua_pcall(L, 0, 0, 0);
+
+    SDL_RenderPresent(poti()->render);
+}
+
+int poti_loop(void) {
+#if defined(__EMSCRIPTEN__)
+    emscripten_set_main_loop(poti_step, 0, 1);
+#else
+    while (!poti()->should_close) poti_step();
+#endif
     return 1;
 }
 
@@ -1357,57 +1485,158 @@ int luaopen_audio(lua_State *L) {
     return 1;
 }
 
+static int s_register_audio_data(lua_State *L, u8 usage, const char *path) {
+    AudioData *adata = NULL;
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &_audio_data);
+    lua_rawgeti(L, -1, usage);
+    lua_remove(L, -2);
+    lua_pushstring(L, path);
+    lua_gettable(L, -2);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        size_t size;
+        void *data = poti()->read_file(path, &size);
+        if (!data) {
+            int len = strlen(path) + 1;
+            char buf[50 + len];
+            sprintf(buf, "failed to load audio: %s\n", path);
+            lua_pushstring(L, buf);
+            lua_error(L);
+            return 1;
+        }
+        adata = malloc(sizeof(*data));
+        adata->usage = usage;
+        if (!adata) {
+            int len = strlen(path) + 1;
+            char buf[50 + len];
+            sprintf(buf, "failed to alloc memory for audio: %s\n", path);
+            lua_pushstring(L, buf);
+            lua_error(L);
+            return 1;
+        }
+        if (usage == AUDIO_STATIC) {
+            ma_decoder_config dec_config = ma_decoder_config_init(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS, AUDIO_DEVICE_SAMPLE_RATE);
+            ma_uint64 frame_count_out;
+            void *dec_data;
+            ma_result result = ma_decode_memory(data, size, &dec_config, &frame_count_out, &dec_data);
+            if (result != MA_SUCCESS) {
+                luaL_error(L, "Failed to decode audio data");
+                return 1;
+            }
+            adata->data = dec_data;
+            adata->size = frame_count_out;
+            free(data);
+        } else {
+            adata->data = data;
+            adata->size = size;
+        }
+        lua_pushstring(L, path);
+        lua_pushlightuserdata(L, adata);
+        lua_settable(L, -3);
+    } else {
+        adata = lua_touserdata(L, -1);
+    }
+    lua_pop(L, 2);
+    lua_pushlightuserdata(L, adata);
+    return 1;
+}
+
 int l_poti_new_audio(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
-    const char *s_usage = luaL_optstring(L, 1, "stream");
+    const char *s_usage = luaL_optstring(L, 2, "stream");
+    u8 need_register = 0;
 
-    Audio **buf = lua_newuserdata(L, sizeof(*buf));
+    int usage = AUDIO_STREAM;
+    if (!strcmp(s_usage, "static")) usage = AUDIO_STATIC;
+
+    s_register_audio_data(L, usage, path);
+    AudioData *a_data = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    Audio **audio = lua_newuserdata(L, sizeof(*audio));
     luaL_setmetatable(L, AUDIO_CLASS);
-    int usage = MO_AUDIO_STREAM;
+    *audio = malloc(sizeof(Audio));
+    (*audio)->data.data = a_data->data;
+    (*audio)->data.size = a_data->size;
+    (*audio)->data.usage = a_data->usage;
 
-    if (!strcmp(s_usage, "static")) usage = MO_AUDIO_STATIC; 
+    // *buf = mo_audio(data, size, usage);
+    // AudioBuffer *buffer = &poti()->audio.buffers[index];
 
-    size_t size;
-    void *data = poti()->read_file(path, &size);
-    *buf = mo_audio(data, size, usage);
     return 1;
 }
 
 int poti_volume(lua_State *L) {
     float volume = luaL_optnumber(L, 1, 0);
-    mo_volume(NULL, volume);
+    // mo_volume(NULL, volume);
 
     return 0;
 }
 
 int l_poti_audio_play(lua_State *L) {
-    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
-    mo_play(*buf);
+    Audio **audio = luaL_checkudata(L, 1, AUDIO_CLASS);
+    // mo_play(*buf);
+    i32 index = 0;
+    i32 i;
+    for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        if (!poti()->audio.buffers[i].loaded) {
+            index = i;
+            break;
+        }
+    }
+
+    AudioBuffer *buffer = &poti()->audio.buffers[index];
+    ma_decoder_config dec_config = ma_decoder_config_init(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS, AUDIO_DEVICE_SAMPLE_RATE);
+    ma_result result = -1;
+    AudioData *a_data = &(*audio)->data;
+    buffer->usage = a_data->usage;
+    buffer->size = a_data->size;
+    if (a_data->usage == AUDIO_STREAM) {
+        buffer->offset = 0;
+        result = ma_decoder_init_memory(a_data->data, a_data->size, &dec_config, &buffer->decoder);
+        buffer->data = a_data->data;
+        ma_decoder_seek_to_pcm_frame(&buffer->decoder, 0);
+        buffer->offset = 0;
+    } else {
+        buffer->data = a_data->data;
+        result = 0;
+    }
+
+    if (result != MA_SUCCESS) {
+        fprintf(stderr, "Failed to load sound %s\n", ma_result_description(result));
+        exit(0);
+    }
+
+    buffer->loaded = 1;
+    buffer->playing = 1;
+    buffer->loop = 0;
+    buffer->paused = 0;
+
     return 0;
 }
 
 int l_poti_audio_stop(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
-    mo_stop(*buf);
+    // mo_stop(*buf);
+
     return 0;
 }
 
 int l_poti_audio_pause(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
-    mo_pause(*buf);
+    // mo_pause(*buf);
     return 0;
 }
 
 int l_poti_audio_playing(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
-    lua_pushboolean(L, mo_is_playing(*buf));
+    lua_pushboolean(L, 1);
     return 1;
 }
 
 int l_poti_audio_volume(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     float volume = luaL_optnumber(L, 2, 0);
-    mo_volume(*buf, volume);
+    // mo_volume(*buf, volume);
     return 0;
 }
 
@@ -1415,7 +1644,7 @@ int l_poti_audio_pitch(lua_State *L) { return 0; }
 
 int l_poti_audio__gc(lua_State *L) {
     Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
-    mo_audio_destroy(*buf); 
+    // mo_audio_destroy(*buf); 
     return 0;
 }
 
@@ -2306,6 +2535,74 @@ int s_setup_function_ptrs(struct Context *ctx) {
     ctx->utf8_codepoint = s_utf8_codepoint;
 
     return 1;
+}
+
+u32 s_read_and_mix_pcm_frames(AudioBuffer *buffer, f32 *output, u32 frames) {
+    f32 temp[4096];
+    u32 temp_cap_in_frames = ma_countof(temp) / AUDIO_DEVICE_CHANNELS;
+    u32 total_frames_read = 0;
+    ma_decoder *decoder = &buffer->decoder;
+    f32 volume = buffer->volume;
+    f32 size = buffer->size * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
+
+    while (total_frames_read < frames) {
+        u32 sample;
+        u32 frames_read_this_iteration;
+        u32 total_frames_remaining = frames - total_frames_read;
+        u32 frames_to_read_this_iteration = temp_cap_in_frames;
+        if (frames_to_read_this_iteration > total_frames_remaining) {
+            frames_to_read_this_iteration = total_frames_remaining;
+        }
+
+        if (buffer->usage == AUDIO_STREAM) {
+            frames_read_this_iteration = (u32)ma_decoder_read_pcm_frames(decoder, temp, frames_to_read_this_iteration);
+        } else {
+            frames_read_this_iteration = frames_to_read_this_iteration;
+            u32 aux = frames_to_read_this_iteration * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
+            memcpy(temp, buffer->data + buffer->offset, aux);
+            if (buffer->offset > size) frames_read_this_iteration = 0;
+            buffer->offset += aux;
+        }
+
+        if (frames_read_this_iteration == 0) {
+            break;
+        }
+
+        for (sample = 0; sample < frames_read_this_iteration * AUDIO_DEVICE_CHANNELS; ++sample) {
+            output[total_frames_read * AUDIO_DEVICE_CHANNELS + sample] += temp[sample] * volume;
+        }
+
+        total_frames_read += frames_read_this_iteration;
+
+        if (frames_read_this_iteration < frames_to_read_this_iteration) {
+            break;
+        }
+    }
+
+    return total_frames_read;
+}
+
+void s_audio_callback(ma_device *device, void *output, const void *input, ma_uint32 frame_count) {
+    f32 *out = (f32*)output;
+    
+    ma_mutex_lock(&poti()->audio.lock);
+    i32 i;
+    for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        AudioBuffer *buffer = &poti()->audio.buffers[i];
+        if (buffer->playing && buffer->loaded && !buffer->paused) {
+            u32 frames_read = s_read_and_mix_pcm_frames(buffer, out, frame_count);
+            if (frames_read < frame_count) {
+                if (buffer->loop) {
+                    ma_decoder_seek_to_pcm_frame(&buffer->decoder, 0);
+                    buffer->offset = 0;
+                } else {
+                    buffer->playing = 0;
+                }
+            }
+        }
+    }
+    ma_mutex_unlock(&poti()->audio.lock);
+    (void)input;
 }
 
 int main(int argc, char ** argv) {

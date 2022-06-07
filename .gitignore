@@ -9,9 +9,9 @@ poti
 *.wav
 *.png
 *.jpg
-*.ttf
 *.exe
 cross
 *.dll
 *.ldtk
 VC
+external/SDL2
