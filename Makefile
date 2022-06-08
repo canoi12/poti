@@ -29,7 +29,7 @@ ifeq ($(TARGET), Windows)
 else
 	ifeq ($(TARGET), Web)
 		CC := emcc
-		CFLAGS = -Wall -std=gnu99 -s WASM=1 -s USE_SDL=2 --embed-file main.lua --embed-file som.wav
+		CFLAGS = -Wall -std=gnu99 -sALLOW_MEMORY_GROWTH -sFORCE_FILESYSTEM -s WASM=1 -s USE_SDL=2
 		LFLAGS = -lm -ldl
 		EXE := .html
 		CLEAR_FILES = *.wasm *.js

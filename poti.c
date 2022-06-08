@@ -441,7 +441,7 @@ int poti_init(void) {
 
 #ifdef __EMSCRIPTEN__
     u32 flags = SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER |
-    SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_SENSOR;
+    SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_SENSOR | SDL_INIT_AUDIO;
 #else
     u32 flags = SDL_INIT_EVERYTHING;
 #endif
@@ -1543,7 +1543,6 @@ static int s_register_audio_data(lua_State *L, u8 usage, const char *path) {
 int l_poti_new_audio(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     const char *s_usage = luaL_optstring(L, 2, "stream");
-    u8 need_register = 0;
 
     int usage = AUDIO_STREAM;
     if (!strcmp(s_usage, "static")) usage = AUDIO_STATIC;
@@ -1558,14 +1557,11 @@ int l_poti_new_audio(lua_State *L) {
     (*audio)->data.size = a_data->size;
     (*audio)->data.usage = a_data->usage;
 
-    // *buf = mo_audio(data, size, usage);
-    // AudioBuffer *buffer = &poti()->audio.buffers[index];
-
     return 1;
 }
 
 int poti_volume(lua_State *L) {
-    float volume = luaL_optnumber(L, 1, 0);
+    // float volume = luaL_optnumber(L, 1, 0);
     // mo_volume(NULL, volume);
 
     return 0;
@@ -1614,14 +1610,14 @@ int l_poti_audio_play(lua_State *L) {
 }
 
 int l_poti_audio_stop(lua_State *L) {
-    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    // Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     // mo_stop(*buf);
 
     return 0;
 }
 
 int l_poti_audio_pause(lua_State *L) {
-    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    // Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     // mo_pause(*buf);
     return 0;
 }
