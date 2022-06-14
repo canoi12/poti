@@ -14,7 +14,7 @@ function poti.draw()
   tex:draw()
   poti.render.target()
   
-  canvas:draw(dest)
+  canvas:draw(nil, dest)
 end
 ```
 
