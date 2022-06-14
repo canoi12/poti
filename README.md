@@ -6,14 +6,14 @@ function poti.load()
   tex = poti.Texture("image.png", "static")
   canvas = poti.Texture(160, 95, "target")
   
-  dest = poti.Rect(0, 0, 160*4, 95*4)
+  dest = {0, 0, 160*4, 95*4}
 end
 
 function poti.draw()
-  poti.target(canvas)
-  poti.clear()
+  poti.render.target(canvas)
+  poti.render.clear()
   tex:draw()
-  poti.target()
+  poti.render.target()
   
   canvas:draw(dest)
 end

@@ -252,6 +252,7 @@ static int luaopen_keyboard(lua_State* L);
 static int luaopen_mouse(lua_State* L);
 static int luaopen_joystick(lua_State *L);
 static int luaopen_gamepad(lua_State *L);
+static int luaopen_render(lua_State* L);
 
 /*=================================*
  *              Core               *
@@ -361,16 +362,16 @@ static int l_poti_font__gc(lua_State *L);
 
 
 /* Draw */
-static int l_poti_clear(lua_State *L);
-static int l_poti_color(lua_State *L);
-static int l_poti_mode(lua_State *L);
-static int l_poti_set_target(lua_State *L);
-static int l_poti_draw_point(lua_State *L);
-static int l_poti_draw_line(lua_State *L);
-static int l_poti_draw_rectangle(lua_State *L);
-static int l_poti_draw_circle(lua_State *L);
-static int l_poti_draw_triangle(lua_State *L);
-static int l_poti_print(lua_State *L);
+static int l_poti_render_clear(lua_State *L);
+static int l_poti_render_color(lua_State *L);
+static int l_poti_render_mode(lua_State *L);
+static int l_poti_render_target(lua_State *L);
+static int l_poti_render_point(lua_State *L);
+static int l_poti_render_line(lua_State *L);
+static int l_poti_render_rectangle(lua_State *L);
+static int l_poti_render_circle(lua_State *L);
+static int l_poti_render_triangle(lua_State *L);
+static int l_poti_render_print(lua_State *L);
 
 /*=================================*
  *              Input              *
@@ -386,8 +387,8 @@ static int l_poti_mouse_down(lua_State *L);
 static int l_poti_mouse_up(lua_State *L);
 
 /* Joystick */
-static int poti_joystick(lua_State* L);
-static int poti_num_joysticks(lua_State *L);
+static int l_poti_joystick(lua_State* L);
+static int l_poti_num_joysticks(lua_State *L);
 // static int l_poti_joystick_opened(lua_State *L);
 
 static int l_poti_joystick_name(lua_State *L);
@@ -580,6 +581,7 @@ int poti_step(void) {
     lua_pcall(L, 0, 0, 0);
 
     SDL_RenderPresent(poti()->render);
+    return 1;
 }
 
 int poti_loop(void) {
@@ -622,27 +624,16 @@ int luaopen_poti(lua_State *L) {
         {"start_textinput", l_poti_start_textinput},
         {"stop_textinput", l_poti_stop_textinput},
         {"textinput_rect", l_poti_textinput_rect},
-        /* Draw */
-        {"clear", l_poti_clear},
-        {"mode", l_poti_mode},
-        {"color", l_poti_color},
-        {"target", l_poti_set_target},
-        {"point", l_poti_draw_point},
-        {"line", l_poti_draw_line},
-        {"circle", l_poti_draw_circle},
-        {"rectangle", l_poti_draw_rectangle},
-        {"triangle", l_poti_draw_triangle},
-        {"print", l_poti_print},
         /* Audio */
         {"volume", poti_volume},
         /* Types */
         {"Texture", l_poti_new_texture},
         {"Font", l_poti_new_font},
         {"Audio", l_poti_new_audio},
-        {"Joystick", poti_joystick},
+        {"Joystick", l_poti_joystick},
         {"Gamepad", l_poti_gamepad},
         /* Joystick */
-        {"num_joysticks", poti_num_joysticks},
+        {"num_joysticks", l_poti_num_joysticks},
         /* Gamepad */
         {"is_gamepad", l_poti_is_gamepad},
         {NULL, NULL}
@@ -659,6 +650,7 @@ int luaopen_poti(lua_State *L) {
         {"mouse", luaopen_mouse},
         {"keyboard", luaopen_keyboard},
         {"event", luaopen_event},
+        {"render", luaopen_render},
         {NULL, NULL}
     };
 
@@ -1037,10 +1029,14 @@ static const lua_CFunction window_events[] = {
     [SDL_WINDOWEVENT_CLOSE] = poti_windowevent_null,
     [SDL_WINDOWEVENT_TAKE_FOCUS] = poti_windowevent_null,
     [SDL_WINDOWEVENT_HIT_TEST] = poti_windowevent_null,
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+    [SDL_WINDOWEVENT_ICCPROF_CHANGED] = poti_windowevent_null,
+    [SDL_WINDOWEVENT_DISPLAY_CHANGED] = poti_windowevent_null,
+#endif
 };
 
 int l_poti_callback_windowevent(lua_State *L) {
-    SDL_Event *event = lua_touserdata(L, 1);
+    SDL_Event* event = lua_touserdata(L, 1);
     window_events[event->window.event](L);
     return 0;
 }
@@ -1198,9 +1194,17 @@ static int _texture_from_path(lua_State *L, Texture **tex) {
     u8 *img = (u8*)poti()->read_file(path, &fsize);
     if (!img) {
         int len = strlen(path) + 50;
+#ifdef _WIN32
+        char* err = malloc(len);
+        sprintf_s(err, "failed to open image: %s\n", path);
+#else
         char err[len];
         sprintf(err, "failed to open image: %s\n", path);
+#endif
         lua_pushstring(L, err);
+#ifdef _WIN32
+        free(err);
+#endif
         lua_error(L);
         return 1;
     }
@@ -1383,6 +1387,8 @@ int l_poti_texture_size(lua_State *L) {
 }
 
 int l_poti_texture__gc(lua_State *L) {
+    Texture** tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    SDL_DestroyTexture(*tex);
     return 0;
 }
 
@@ -1450,12 +1456,12 @@ int l_poti_font_print(lua_State *L) {
     }
 
     return 0;
-
-    return 0;
 }
 
 int l_poti_font__gc(lua_State *L) {
-    // te_font_t **font = luaL_checkudata(L, 1, FONT_CLASS);
+    Font** font = luaL_checkudata(L, 1, FONT_CLASS);
+    SDL_DestroyTexture((*font)->tex);
+    free((*font)->data);
     // tea_destroy_font(*font);
     return 0;
 }
@@ -1496,20 +1502,19 @@ static int s_register_audio_data(lua_State *L, u8 usage, const char *path) {
         size_t size;
         void *data = poti()->read_file(path, &size);
         if (!data) {
-            int len = strlen(path) + 1;
-            char buf[50 + len];
-            sprintf(buf, "failed to load audio: %s\n", path);
-            lua_pushstring(L, buf);
+            const int len = 50 + strlen(path) + 1;
+            lua_pushstring(L, "failed to load audio: ");
+            lua_pushstring(L, path);
+            lua_concat(L, 2);
             lua_error(L);
             return 1;
         }
-        adata = malloc(sizeof(*data));
+        adata = malloc(sizeof(*adata));
         adata->usage = usage;
         if (!adata) {
-            int len = strlen(path) + 1;
-            char buf[50 + len];
-            sprintf(buf, "failed to alloc memory for audio: %s\n", path);
-            lua_pushstring(L, buf);
+            lua_pushstring(L, "failed to alloc memory for audio: ");
+            lua_pushstring(L, path);
+            lua_concat(L, 2);
             lua_error(L);
             return 1;
         }
@@ -1647,7 +1652,27 @@ int l_poti_audio__gc(lua_State *L) {
  * Draw
  *********************************/
 
-int l_poti_clear(lua_State *L) {
+int luaopen_render(lua_State* L) {
+    luaL_Reg reg[] = {
+        {"mode", l_poti_render_mode},
+        {"clear", l_poti_render_clear},
+        {"color", l_poti_render_color},
+        {"target", l_poti_render_target},
+        {"point", l_poti_render_point},
+        {"line", l_poti_render_line},
+        {"circle", l_poti_render_circle},
+        {"rectangle", l_poti_render_rectangle},
+        {"triangle", l_poti_render_triangle},
+        {"print", l_poti_render_print},
+        {NULL, NULL}
+    };
+
+    luaL_newlib(L, reg);
+
+    return 1;
+}
+
+int l_poti_render_clear(lua_State *L) {
     color_t color = {0, 0, 0, 255};
     int args = lua_gettop(L);
 
@@ -1660,7 +1685,7 @@ int l_poti_clear(lua_State *L) {
     return 0;
 }
 
-int l_poti_mode(lua_State *L) {
+int l_poti_render_mode(lua_State *L) {
     const char *mode_str = luaL_checkstring(L, 1);
     int mode = 0;
     if (!strcmp(mode_str, "line")) mode = 0;
@@ -1669,7 +1694,7 @@ int l_poti_mode(lua_State *L) {
     return 0;
 }
 
-int l_poti_color(lua_State *L) {
+int l_poti_render_color(lua_State *L) {
     int args = lua_gettop(L);
 
     color_t col = {0, 0, 0, 255};
@@ -1682,7 +1707,7 @@ int l_poti_color(lua_State *L) {
     return 0;
 }
 
-int l_poti_set_target(lua_State *L) {
+int l_poti_render_target(lua_State *L) {
     Texture **tex = luaL_testudata(L, 1, TEXTURE_CLASS);
     Texture *t = NULL;
     if (tex) t = *tex;
@@ -1691,7 +1716,7 @@ int l_poti_set_target(lua_State *L) {
     return 0;
 }
 
-int l_poti_draw_point(lua_State *L) {
+int l_poti_render_point(lua_State *L) {
     float x, y;
     x = luaL_checknumber(L, 1);
     y = luaL_checknumber(L, 2);
@@ -1700,7 +1725,7 @@ int l_poti_draw_point(lua_State *L) {
     return 0;
 }
 
-int l_poti_draw_line(lua_State *L) {
+int l_poti_render_line(lua_State *L) {
     float p[4];
 
     for (int i = 0; i < 4; i++) {
@@ -1766,7 +1791,7 @@ static void draw_lined_circle(float xc, float yc, float radius, int segments) {
     }
 }
 
-int l_poti_draw_circle(lua_State *L) {
+int l_poti_render_circle(lua_State *L) {
 
     float x, y;
     x = luaL_checknumber(L, 1);
@@ -1796,7 +1821,7 @@ static void draw_lined_rect(SDL_Rect *r) {
     SDL_RenderDrawRect(poti()->render, r);
 }
 
-int l_poti_draw_rectangle(lua_State *L) {
+int l_poti_render_rectangle(lua_State *L) {
 
     SDL_Rect r = {0, 0, 0, 0};
 
@@ -1882,7 +1907,7 @@ static void draw_lined_triangle(float x0, float y0, float x1, float y1, float x2
     SDL_RenderDrawLine(poti()->render, x2, y2, x0, y0);
 }
 
-int l_poti_draw_triangle(lua_State *L) {
+int l_poti_render_triangle(lua_State *L) {
 
     float points[6];
 
@@ -1934,7 +1959,7 @@ void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SD
     if (rect) *rect = (SDL_Rect){s0, t0, s1, t1};
 }
 
-int l_poti_print(lua_State *L) {
+int l_poti_render_print(lua_State *L) {
     int index = 1;
     Font *font = luaL_testudata(L, index++, FONT_CLASS);
     if (!font) {
@@ -2121,7 +2146,7 @@ int l_poti_mouse_released(lua_State *L) {
 }
 
 /* Joystick */
-int poti_joystick(lua_State* L) {
+int l_poti_joystick(lua_State* L) {
     Joystick** j = lua_newuserdata(L, sizeof(*j));
     luaL_setmetatable(L, JOYSTICK_CLASS);
     int number = luaL_checknumber(L, 1);
@@ -2130,7 +2155,7 @@ int poti_joystick(lua_State* L) {
     return 1;
 }
 
-int poti_num_joysticks(lua_State *L) {
+int l_poti_num_joysticks(lua_State *L) {
     lua_pushnumber(L, SDL_NumJoysticks());
     return 1;
 }
@@ -2332,9 +2357,9 @@ int l_poti_gamepad_button(lua_State *L) {
 
 int l_poti_gamepad_rumble(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_CLASS);
-    u16 low = luaL_checknumber(L, 2);
-    u16 high = luaL_checknumber(L, 3);
-    u32 freq = luaL_optnumber(L, 4, 100);
+    u16 low = (u16)luaL_checknumber(L, 2);
+    u16 high = (u16)luaL_checknumber(L, 3);
+    u32 freq = (u32)luaL_optnumber(L, 4, 100);
     lua_pushboolean(L, SDL_GameControllerRumble(*g, low, high, freq) == 0);
     return 1;
 }
@@ -2365,6 +2390,7 @@ static i8* s_read_file(const char *filename, size_t *size) {
     if (size) *size = sz;
     fseek(fp, 0, SEEK_SET);
     i8 *str = malloc(sz);
+    if (!str) return NULL;
     fread(str, 1, sz, fp);
     fclose(fp);
 
