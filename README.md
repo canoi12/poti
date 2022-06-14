@@ -5,7 +5,6 @@ Lua game framework with a tiny C core
 function poti.load()
   tex = poti.Texture("image.png", "static")
   canvas = poti.Texture(160, 95, "target")
-  
   dest = {0, 0, 160*4, 95*4}
 end
 
