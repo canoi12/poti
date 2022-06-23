@@ -24,3 +24,13 @@
 
 #undef STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.h"
+
+#define NK_PRIVATE
+#define NK_INCLUDE_FIXED_TYPES
+#define NK_INCLUDE_STANDARD_IO
+#define NK_INCLUDE_DEFAULT_ALLOCATOR
+#define NK_INCLUDE_VERTEX_BUFFER_OUTPUT
+#define NK_INCLUDE_FONT_BAKING
+#define NK_INCLUDE_DEFAULT_FONT
+#define NK_IMPLEMENTATION
+#include "nuklear/nuklear.h"
