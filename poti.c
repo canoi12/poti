@@ -27,12 +27,9 @@
 #include "stb_truetype.h"
 #include "sbtar.h"
 
-#define NK_PRIVATE
 #define NK_INCLUDE_FIXED_TYPES
 #define NK_INCLUDE_STANDARD_IO
 #define NK_INCLUDE_DEFAULT_ALLOCATOR
-#define NK_INCLUDE_VERTEX_BUFFER_OUTPUT
-#define NK_INCLUDE_FONT_BAKING
 #define NK_INCLUDE_DEFAULT_FONT
 #include "nuklear/nuklear.h"
 
@@ -185,6 +182,12 @@ struct Context {
     int(*flip_from_table)(lua_State*, i32, i32*);
     int(*point_from_table)(lua_State*, i32, SDL_Point*);
     int(*rect_from_table)(lua_State*, i32, SDL_Rect*);
+
+    struct {
+        struct nk_context ctx;
+        struct nk_buffer cmds;
+        struct nk_font_atlas *atlas;
+    } ui;
 };
 
 struct Context _ctx;
@@ -442,6 +445,7 @@ int poti_init(void) {
     poti()->L = luaL_newstate();
     lua_State *L = poti()->L;
 
+
     luaL_openlibs(L);
     luaL_requiref(L, "poti", luaopen_poti, 1);
 
@@ -473,11 +477,18 @@ int poti_init(void) {
     poti()->window = window;
     poti()->render = render;
 
+    nk_init_default(&poti()->ui.ctx, NULL);
+    nk_buffer_init_default(&poti()->ui.cmds);
+
+    // nk_font_atlas_init_default(&poti()->ui.atlas);
+
     if (sbtar_open(&poti()->pkg, "game.pkg"))
         poti()->is_packed = 1;
     s_setup_function_ptrs(poti());
 
+
     poti()->init_font(&poti()->default_font, _font_ttf, _font_ttf_size, 8);
+    fprintf(stderr, "OKOK\n");
 
     // mo_init(0);
     ma_context_config ctx_config = ma_context_config_init();
@@ -1042,7 +1053,7 @@ static const lua_CFunction window_events[] = {
     [SDL_WINDOWEVENT_CLOSE] = poti_windowevent_null,
     [SDL_WINDOWEVENT_TAKE_FOCUS] = poti_windowevent_null,
     [SDL_WINDOWEVENT_HIT_TEST] = poti_windowevent_null,
-#if SDL_VERSION_ATLEAST(2, 0, 14)
+#if SDL_VERSION_ATLEAST(2, 0, 22)
     [SDL_WINDOWEVENT_ICCPROF_CHANGED] = poti_windowevent_null,
     [SDL_WINDOWEVENT_DISPLAY_CHANGED] = poti_windowevent_null,
 #endif
@@ -2509,6 +2520,7 @@ static i32 s_init_font(Font *font, const void *data, size_t buf_size, i32 font_s
         exit(EXIT_FAILURE);
     }
     memcpy(font->data, data, buf_size);
+
 
     if (!stbtt_InitFont(&font->info, font->data, 0)) {
         fprintf(stderr, "Failed to init stbtt_info\n");
