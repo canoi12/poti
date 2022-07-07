@@ -37,3 +37,8 @@ function poti.draw()
   canvas:draw(0, 0, 0, 4, 4)
 end
 ```
+
+# TODO
+
+- Change default SDL2 render to OpenGL (for shader support and more GUI lib options) (?)
+  - multiple render backends (?)

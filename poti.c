@@ -27,11 +27,7 @@
 #include "stb_truetype.h"
 #include "sbtar.h"
 
-#define NK_INCLUDE_FIXED_TYPES
-#define NK_INCLUDE_STANDARD_IO
-#define NK_INCLUDE_DEFAULT_ALLOCATOR
-#define NK_INCLUDE_DEFAULT_FONT
-#include "nuklear/nuklear.h"
+#include "microui/src/microui.h"
 
 #include "poti.h"
 
@@ -183,11 +179,7 @@ struct Context {
     int(*point_from_table)(lua_State*, i32, SDL_Point*);
     int(*rect_from_table)(lua_State*, i32, SDL_Rect*);
 
-    struct {
-        struct nk_context ctx;
-        struct nk_buffer cmds;
-        struct nk_font_atlas *atlas;
-    } ui;
+    mu_Context ui;
 };
 
 struct Context _ctx;
@@ -226,6 +218,9 @@ static const i8 *_initialize =
 "local function _mainLoop()\n"
 "   if poti.update then poti.update(poti.delta()) end\n"
 "   if poti.draw then poti.draw() end\n"
+"   poti.gui_begin()\n"
+"   if poti.draw_gui then poti.draw_gui() end\n"
+"   poti.gui_end()\n"
 "end\n"
 "local _step = _mainLoop\n"
 "function poti.run()\n"
@@ -250,13 +245,17 @@ static void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_
 static u32 s_read_and_mix_pcm_frames(AudioBuffer *buffer, f32 *output, u32 frames);
 static void s_audio_callback(ma_device *device, void *output, const void *input, ma_uint32 frameCount);
 
-static void s_register_meta(lua_State* L, int index, const char* name);
+static void s_font_print(Font* font, float x, float y, const char* text);
+static i32 s_get_text_width(Font *font, const i8* text, i32 len);
+static i32 s_get_text_height(Font *font);
 
 static int poti_init(void);
 static int poti_loop(void);
 static int poti_quit(void);
 
 static int poti_call(const char *name, int args, int ret);
+
+static int l_register_meta_types(lua_State* L);
 
 static int luaopen_poti(lua_State *L);
 static int luaopen_event(lua_State *L);
@@ -268,6 +267,7 @@ static int luaopen_mouse(lua_State* L);
 static int luaopen_joystick(lua_State *L);
 static int luaopen_gamepad(lua_State *L);
 static int luaopen_render(lua_State* L);
+static int luaopen_gui(lua_State* L);
 
 /*=================================*
  *              Core               *
@@ -439,6 +439,15 @@ static int l_poti_gamepad_rumble(lua_State *L);
 static int l_poti_gamepad_close(lua_State *L);
 static int l_poti_gamepad__gc(lua_State *L);
 
+/*=================================*
+ *               GUI               *
+ *=================================*/
+
+static int l_poti_gui_begin(lua_State* L);
+static int l_poti_gui_end(lua_State* L);
+static int l_poti_gui_begin_window(lua_State* L);
+static int l_poti_gui_end_window(lua_State* L);
+
 static int s_setup_function_ptrs(struct Context *ctx);
 
 int poti_init(void) {
@@ -450,11 +459,12 @@ int poti_init(void) {
     luaL_requiref(L, "poti", luaopen_poti, 1);
 
     char title[100];
-#ifdef _WIN32
-    sprintf_s(title, 100, "poti %s", POTI_VER);
-#else
     sprintf(title, "poti %s", POTI_VER);
-#endif
+
+    mu_init(&poti()->ui);
+    poti()->ui.text_height = s_get_text_height;
+    poti()->ui.text_width = s_get_text_width;
+    poti()->ui.style->font = &poti()->default_font;
 
 #ifdef __EMSCRIPTEN__
     u32 flags = SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER |
@@ -477,20 +487,13 @@ int poti_init(void) {
     poti()->window = window;
     poti()->render = render;
 
-    nk_init_default(&poti()->ui.ctx, NULL);
-    nk_buffer_init_default(&poti()->ui.cmds);
-
-    // nk_font_atlas_init_default(&poti()->ui.atlas);
-
     if (sbtar_open(&poti()->pkg, "game.pkg"))
         poti()->is_packed = 1;
     s_setup_function_ptrs(poti());
 
 
     poti()->init_font(&poti()->default_font, _font_ttf, _font_ttf_size, 8);
-    fprintf(stderr, "OKOK\n");
 
-    // mo_init(0);
     ma_context_config ctx_config = ma_context_config_init();
     ma_result result = ma_context_init(NULL, 0, &ctx_config, &poti()->audio.ctx);
     if (result != MA_SUCCESS) {
@@ -602,6 +605,26 @@ int poti_step(void) {
     lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_step);
     lua_pcall(L, 0, 0, 0);
 
+    mu_Command* cmd = NULL;
+    while (mu_next_command(&poti()->ui, &cmd)) {
+        switch (cmd->type) {
+        case MU_COMMAND_TEXT: s_font_print(&poti()->default_font, cmd->text.pos.x, cmd->text.pos.y, cmd->text.str); break;
+        case MU_COMMAND_RECT: {
+            SDL_SetRenderDrawColor(poti()->render, cmd->rect.color.r, cmd->rect.color.g, cmd->rect.color.b, cmd->rect.color.a);
+            SDL_Rect r = { cmd->rect.rect.x, cmd->rect.rect.y, cmd->rect.rect.w, cmd->rect.rect.h };
+            SDL_RenderFillRect(poti()->render, &r);
+        }
+        break;
+        case MU_COMMAND_CLIP: {
+            SDL_Rect r = { cmd->clip.rect.x, cmd->clip.rect.y, cmd->clip.rect.w, cmd->clip.rect.h };
+            SDL_RenderSetClipRect(poti()->render, &r);
+        }
+                            break;
+        }
+    }
+    SDL_RenderSetClipRect(poti()->render, NULL);
+    SDL_SetRenderDrawColor(poti()->render, 255, 255, 255, 255);
+
     SDL_RenderPresent(poti()->render);
     return 1;
 }
@@ -637,56 +660,6 @@ int poti_call(const char *name, int args, int ret) {
             lua_remove(L, -ret-1);
     }
     return 0;
-}
-
-int luaopen_poti(lua_State *L) {
-    luaL_Reg reg[] = {
-        {"ver", l_poti_ver},
-        {"delta", l_poti_delta},
-        {"start_textinput", l_poti_start_textinput},
-        {"stop_textinput", l_poti_stop_textinput},
-        {"textinput_rect", l_poti_textinput_rect},
-        /* Audio */
-        {"volume", poti_volume},
-        /* Types */
-        {"Texture", l_poti_new_texture},
-        {"Font", l_poti_new_font},
-        {"Audio", l_poti_new_audio},
-        //{"Joystick", l_poti_joystick},
-        {"Gamepad", l_poti_gamepad},
-        /* Joystick */
-        {"num_joysticks", l_poti_num_joysticks},
-        /* Gamepad */
-        {"is_gamepad", l_poti_is_gamepad},
-        {NULL, NULL}
-    };
-
-    luaL_newlib(L, reg);
-
-    struct { char *name; int(*fn)(lua_State*); } libs[] = {
-        /* Types */
-        {"_Texture", luaopen_texture},
-        {"_Font", luaopen_font},
-        {"_Audio", luaopen_audio},
-        /* Modules */
-        {"gamepad", luaopen_gamepad},
-        {"joystick", luaopen_joystick},
-        {"mouse", luaopen_mouse},
-        {"keyboard", luaopen_keyboard},
-        {"event", luaopen_event},
-        {"render", luaopen_render},
-        {NULL, NULL}
-    };
-
-    int i;
-    for (i = 0; libs[i].name; i++) {
-        if (libs[i].fn) {
-            libs[i].fn(L);
-            lua_setfield(L, -2, libs[i].name);
-        }
-    }
-
-    return 1;
 }
 
 /*=================================*
@@ -794,8 +767,21 @@ int l_poti_callback_quit(lua_State* L) {
     return 0;
 }
 
+static const char key_map[256] = {
+  [SDLK_LSHIFT & 0xff] = MU_KEY_SHIFT,
+  [SDLK_RSHIFT & 0xff] = MU_KEY_SHIFT,
+  [SDLK_LCTRL & 0xff] = MU_KEY_CTRL,
+  [SDLK_RCTRL & 0xff] = MU_KEY_CTRL,
+  [SDLK_LALT & 0xff] = MU_KEY_ALT,
+  [SDLK_RALT & 0xff] = MU_KEY_ALT,
+  [SDLK_RETURN & 0xff] = MU_KEY_RETURN,
+  [SDLK_BACKSPACE & 0xff] = MU_KEY_BACKSPACE,
+};
+
 int l_poti_callback_keypressed(lua_State* L) {
     SDL_Event *event = lua_touserdata(L, 1);
+    i32 c = key_map[event->key.keysym.sym & 0xff];
+    mu_input_keydown(&poti()->ui, c);
     lua_getglobal(L, "string");
     lua_getfield(L, -1, "lower");
     lua_remove(L, -2);
@@ -808,6 +794,8 @@ int l_poti_callback_keypressed(lua_State* L) {
 
 int l_poti_callback_keyreleased(lua_State* L) {
     SDL_Event *event = lua_touserdata(L, 1);
+    i32 c = key_map[event->key.keysym.sym & 0xff];
+    mu_input_keyup(&poti()->ui, c);
     lua_pushstring(L, SDL_GetKeyName(event->key.keysym.sym));
     poti_call("key_released", 1, 0);
     return 0;
@@ -815,6 +803,7 @@ int l_poti_callback_keyreleased(lua_State* L) {
 
 int l_poti_callback_mousemotion(lua_State* L) {
     SDL_Event *event = lua_touserdata(L, 1);
+    mu_input_mousemove(&poti()->ui, event->motion.x, event->motion.y);
     lua_pushnumber(L, event->motion.x);
     lua_pushnumber(L, event->motion.y);
     lua_pushnumber(L, event->motion.xrel);
@@ -824,8 +813,17 @@ int l_poti_callback_mousemotion(lua_State* L) {
     return 0;
 }
 
+static const char button_map[256] = {
+  [SDL_BUTTON_LEFT & 0xff] = MU_MOUSE_LEFT,
+  [SDL_BUTTON_RIGHT & 0xff] = MU_MOUSE_RIGHT,
+  [SDL_BUTTON_MIDDLE & 0xff] = MU_MOUSE_MIDDLE,
+};
+
 int l_poti_callback_mousebutton(lua_State* L) {
     SDL_Event *e = lua_touserdata(L, 1);
+    i32 b = button_map[e->button.button & 0xff];
+    if (e->type == SDL_MOUSEBUTTONDOWN) mu_input_mousedown(&poti()->ui, e->button.x, e->button.y, b);
+    else mu_input_mouseup(&poti()->ui, e->button.x, e->button.y, b);
     lua_pushnumber(L, e->button.button);
     lua_pushboolean(L, e->button.state);
     lua_pushnumber(L, e->button.clicks);
@@ -835,6 +833,7 @@ int l_poti_callback_mousebutton(lua_State* L) {
 
 int l_poti_callback_mousewheel(lua_State* L) {
     SDL_Event *event = lua_touserdata(L, 1);
+    mu_input_scroll(&poti()->ui, event->wheel.x, event->wheel.y);
     lua_pushnumber(L, event->wheel.x);
     lua_pushnumber(L, event->wheel.y);
     poti_call("mouse_wheel", 2, 0);
@@ -1420,21 +1419,6 @@ int l_poti_texture__gc(lua_State *L) {
  * Font
  *********************************/
 
-int luaopen_font(lua_State *L) {
-    luaL_Reg reg[] = {
-        {"print", l_poti_font_print},
-        {"__gc", l_poti_font__gc},
-        {NULL, NULL}   
-    };
-
-    luaL_newmetatable(L, FONT_CLASS);
-    luaL_setfuncs(L, reg, 0);
-    lua_pushvalue(L, -1);
-    lua_setfield(L, -2, "__index");
-
-    return 1;
-}
-
 int l_poti_new_font(lua_State *L) {
    const char *path = luaL_checkstring(L, 1); 
    int size = luaL_optnumber(L, 2, 16);
@@ -1482,12 +1466,88 @@ int l_poti_font_print(lua_State *L) {
     return 0;
 }
 
+static int l_poti_font__width(lua_State* L) {
+    int index = 1;
+    Font* font = luaL_checkudata(L, index++, FONT_CLASS);
+    if (!font) {
+        font = &poti()->default_font;
+        --index;
+    }
+
+    const i8* text = luaL_checkstring(L, index++);
+
+    u8* p = (u8*)text;
+    float x0 = 0, y0 = 0;
+    float width = 0;
+    while (*p) {
+        int codepoint;
+        p = poti()->utf8_codepoint(p, &codepoint);
+        SDL_Rect src, dest;
+        SDL_Point pos;
+        s_char_rect(font, codepoint, &x0, &y0, &pos, &src, 0);
+        //dest.x = x + pos.x;
+        //dest.y = y + pos.y;
+        dest.w = src.w;
+        dest.h = src.h;
+        width += src.w;
+        //SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
+    }
+    lua_pushnumber(L, width);
+    return 1;
+}
+
+static int l_poti_font__height(lua_State* L) {
+    int index = 1;
+    Font* font = luaL_checkudata(L, index++, FONT_CLASS);
+    if (!font) {
+        font = &poti()->default_font;
+        --index;
+    }
+
+    const i8* text = luaL_checkstring(L, index++);
+
+    u8* p = (u8*)text;
+    float x0 = 0, y0 = 0;
+    float height = 0;
+    while (*p) {
+        int codepoint;
+        p = poti()->utf8_codepoint(p, &codepoint);
+        SDL_Rect src, dest;
+        SDL_Point pos;
+        s_char_rect(font, codepoint, &x0, &y0, &pos, &src, 0);
+        //dest.x = x + pos.x;
+        //dest.y = y + pos.y;
+        dest.w = src.w;
+        dest.h = src.h;
+        height = src.h > height ? src.h : height;
+        //SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
+    }
+    lua_pushnumber(L, height);
+    return 1;
+}
+
 int l_poti_font__gc(lua_State *L) {
     Font** font = luaL_checkudata(L, 1, FONT_CLASS);
     SDL_DestroyTexture((*font)->tex);
     free((*font)->data);
     // tea_destroy_font(*font);
     return 0;
+}
+
+int luaopen_font(lua_State* L) {
+    luaL_Reg reg[] = {
+        {"print", l_poti_font_print},
+        {"width", l_poti_font__width},
+        {"__gc", l_poti_font__gc},
+        {NULL, NULL}
+    };
+
+    luaL_newmetatable(L, FONT_CLASS);
+    luaL_setfuncs(L, reg, 0);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "__index");
+
+    return 1;
 }
 
 /*********************************
@@ -2005,8 +2065,13 @@ int l_poti_render_print(lua_State *L) {
     x = luaL_optnumber(L, index++, 0);
     y = luaL_optnumber(L, index++, 0);
 
-    u8 *p = (u8*)text;
+    s_font_print(font, x, y, text);
 
+    return 0;
+}
+
+void s_font_print(Font* font, float x, float y, const char* text) {
+    u8* p = (u8*)text;
     float x0 = 0, y0 = 0;
     while (*p) {
         int codepoint;
@@ -2020,8 +2085,26 @@ int l_poti_render_print(lua_State *L) {
         dest.h = src.h;
         SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
     }
+}
 
-    return 0;
+i32 s_get_text_width(Font *font, const i8* text, i32 len) {
+    if (!text) return 0;
+    float x0 = 0, y0 = 0;
+    i32 width = 0;
+    u8* p = (u8*)text;
+    while (*p && len--) {
+        int codepoint;
+        p = poti()->utf8_codepoint(p, &codepoint);
+        SDL_Rect src, dest;
+        SDL_Point pos;
+        s_char_rect(font, codepoint, &x0, &y0, &pos, &src, 0);
+        width += src.w;
+    }
+    return width;
+}
+
+i32 s_get_text_height(Font *font) {
+    return font->height;
 }
 
 /*********************************
@@ -2092,6 +2175,7 @@ int luaopen_joystick(lua_State *L) {
 int luaopen_gamepad(lua_State *L) {
     luaL_Reg reg[] = {
         {"open", l_poti_gamepad},
+        {"is", l_poti_is_gamepad},
         {NULL, NULL}
     };
 
@@ -2442,8 +2526,140 @@ int l_poti_gamepad__gc(lua_State* L) {
     return 0;
 }
 
-static i8* s_read_file(const char *filename, size_t *size) {
-    FILE *fp;
+/*=================================*
+ *               GUI               *
+ *=================================*/
+
+int l_poti_gui_begin(lua_State* L) {
+    mu_begin(&poti()->ui);
+    return 0;
+}
+
+int l_poti_gui_end(lua_State* L) {
+    mu_end(&poti()->ui);
+    return 0;
+}
+
+int l_poti_gui_begin_window(lua_State* L) {
+    const char* title = luaL_checkstring(L, 1);
+    SDL_Rect r;
+    s_get_rect_from_table(L, 2, &r);
+    lua_pushboolean(L, mu_begin_window(&poti()->ui, title, mu_rect(r.x, r.y, r.w, r.h)));
+    return 1;
+}
+
+int l_poti_gui_end_window(lua_State* L) {
+    mu_end_window(&poti()->ui);
+    return 0;
+}
+
+static int l_poti_gui_label(lua_State* L) {
+    const char* text = luaL_checkstring(L, 1);
+    mu_label(&poti()->ui, text);
+    return 0;
+}
+
+static int l_poti_gui_button(lua_State* L) {
+    const char* label = luaL_checkstring(L, 1);
+    lua_pushboolean(L, mu_button(&poti()->ui, label));
+    return 1;
+}
+
+int row_pool[8];
+
+static int l_poti_gui_layout_row(lua_State* L) {
+    int index = 1;
+    int items = luaL_checkinteger(L, index++);
+    int *width = row_pool;
+    if (lua_istable(L, index)) {
+        int len = lua_rawlen(L, index);
+        for (int i = 0; i < len; i++) {
+            lua_rawgeti(L, index, i + 1);
+            width[i] = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+        }
+        index++;
+    }
+    else {
+        memset(row_pool, 0, sizeof(int) * 8);
+    }
+    int height = luaL_optinteger(L, index, 0);
+    mu_layout_row(&poti()->ui, items, width, height);
+}
+
+int luaopen_gui(lua_State* L) {
+    luaL_Reg reg[] = {
+        {"begin_window", l_poti_gui_begin_window},
+        {"end_window", l_poti_gui_end_window},
+        {"button", l_poti_gui_button},
+        {"label", l_poti_gui_label},
+        {"layout_row", l_poti_gui_layout_row},
+        {NULL, NULL}
+    };
+
+    luaL_newlib(L, reg);
+
+    return 1;
+}
+
+int luaopen_poti(lua_State* L) {
+    luaL_Reg reg[] = {
+        {"ver", l_poti_ver},
+        {"delta", l_poti_delta},
+        {"start_textinput", l_poti_start_textinput},
+        {"stop_textinput", l_poti_stop_textinput},
+        {"textinput_rect", l_poti_textinput_rect},
+        /* Audio */
+        {"volume", poti_volume},
+        /* Types */
+        {"Texture", l_poti_new_texture},
+        {"Font", l_poti_new_font},
+        {"Audio", l_poti_new_audio},
+        /* GUI */
+        {"gui_begin", l_poti_gui_begin},
+        {"gui_end", l_poti_gui_end},
+        {NULL, NULL}
+    };
+
+    luaL_newlib(L, reg);
+
+    struct { char* name; int(*fn)(lua_State*); } libs[] = {
+        /* Types */
+        {"_Texture", luaopen_texture},
+        {"_Font", luaopen_font},
+        {"_Audio", luaopen_audio},
+        /* Modules */
+        {"gamepad", luaopen_gamepad},
+        {"joystick", luaopen_joystick},
+        {"mouse", luaopen_mouse},
+        {"keyboard", luaopen_keyboard},
+        {"event", luaopen_event},
+        {"render", luaopen_render},
+        {"gui", luaopen_gui},
+        {NULL, NULL}
+    };
+
+    int i;
+    for (i = 0; libs[i].name; i++) {
+        if (libs[i].fn) {
+            libs[i].fn(L);
+            lua_setfield(L, -2, libs[i].name);
+        }
+    }
+
+    return 1;
+}
+
+int main(int argc, char ** argv) {
+    poti_init();
+    poti_loop();
+    poti_quit();
+    return 1;
+}
+
+/* Static functions implementations */
+static i8* s_read_file(const char* filename, size_t* size) {
+    FILE* fp;
 #if defined(_WIN32)
     fopen_s(&fp, filename, "rb+");
 #else
@@ -2454,7 +2670,7 @@ static i8* s_read_file(const char *filename, size_t *size) {
     int sz = ftell(fp);
     if (size) *size = sz;
     fseek(fp, 0, SEEK_SET);
-    i8 *str = malloc(sz);
+    i8* str = malloc(sz);
     if (!str) return NULL;
     fread(str, 1, sz, fp);
     fclose(fp);
@@ -2462,12 +2678,12 @@ static i8* s_read_file(const char *filename, size_t *size) {
     return str;
 }
 
-static i8* s_read_file_packed(const i8 *filename, size_t *size) {
-    sbtar_t *tar = &poti()->pkg;
+static i8* s_read_file_packed(const i8* filename, size_t* size) {
+    sbtar_t* tar = &poti()->pkg;
     if (!sbtar_find(tar, filename)) return NULL;
     sbtar_header_t h;
     sbtar_header(tar, &h);
-    i8 *str = malloc(h.size);
+    i8* str = malloc(h.size);
     if (size) *size = h.size;
     sbtar_data(tar, str, h.size);
 
@@ -2476,7 +2692,7 @@ static i8* s_read_file_packed(const i8 *filename, size_t *size) {
 
 #define MAX_UNICODE 0x10FFFF
 
-static u8* s_utf8_codepoint(u8 *p, i32 *codepoint) {
+static u8* s_utf8_codepoint(u8* p, i32* codepoint) {
     u8* n = NULL;
     u8 c = *p;
     if (c < 0x80) {
@@ -2486,33 +2702,33 @@ static u8* s_utf8_codepoint(u8 *p, i32 *codepoint) {
     }
 
     switch (c & 0xf0) {
-        case 0xf0: {
-            *codepoint = ((p[0] & 0x07) << 18) | ((p[1] & 0x3f) << 12) | ((p[2] & 0x3f) << 6) | ((p[3] & 0x3f));
-            n = p + 4;
-            break;
-        }
-        case 0xe0: {
-            *codepoint = ((p[0] & 0x0f) << 12) | ((p[1] & 0x3f) << 6) | ((p[2] & 0x3f));
-            n = p + 3;
-            break;
-        }
-        case 0xc0:
-        case 0xd0: {
-            *codepoint = ((p[0] & 0x1f) << 6) | ((p[1] & 0x3f));
-            n = p + 2;
-            break;
-        }
-        default:
-        {
-            *codepoint = -1;
-            n = n + 1;
-        }
+    case 0xf0: {
+        *codepoint = ((p[0] & 0x07) << 18) | ((p[1] & 0x3f) << 12) | ((p[2] & 0x3f) << 6) | ((p[3] & 0x3f));
+        n = p + 4;
+        break;
+    }
+    case 0xe0: {
+        *codepoint = ((p[0] & 0x0f) << 12) | ((p[1] & 0x3f) << 6) | ((p[2] & 0x3f));
+        n = p + 3;
+        break;
+    }
+    case 0xc0:
+    case 0xd0: {
+        *codepoint = ((p[0] & 0x1f) << 6) | ((p[1] & 0x3f));
+        n = p + 2;
+        break;
+    }
+    default:
+    {
+        *codepoint = -1;
+        n = n + 1;
+    }
     }
     if (*codepoint > MAX_UNICODE) *codepoint = -1;
     return n;
 }
 
-static i32 s_init_font(Font *font, const void *data, size_t buf_size, i32 font_size) {
+static i32 s_init_font(Font* font, const void* data, size_t buf_size, i32 font_size) {
     if (buf_size <= 0) return 0;
     font->data = malloc(buf_size);
     if (!font->data) {
@@ -2566,14 +2782,14 @@ static i32 s_init_font(Font *font, const void *data, size_t buf_size, i32 font_s
     u32* bitmap = malloc(final_size * sizeof(u32));
     memset(bitmap, 0, final_size * sizeof(u32));
     int x = 0;
-    SDL_PixelFormat *fmt = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA32);
+    SDL_PixelFormat* fmt = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA32);
     for (int i = 0; i < 256; i++) {
         int ww = font->c[i].bw;
         int hh = font->c[i].bh;
         int ssize = ww * hh;
         int ox, oy;
 
-        unsigned char *bmp = stbtt_GetCodepointBitmap(&font->info, 0, font->scale, i, NULL, NULL, &ox, &oy);
+        unsigned char* bmp = stbtt_GetCodepointBitmap(&font->info, 0, font->scale, i, NULL, NULL, &ox, &oy);
         // u32 pixels[ssize];
         int xx, yy;
         xx = yy = 0;
@@ -2586,34 +2802,34 @@ static i32 s_init_font(Font *font, const void *data, size_t buf_size, i32 font_s
             bitmap[xx + yy] = SDL_MapRGBA(fmt, 255, 255, 255, bmp[j]);
         }
         stbtt_FreeBitmap(bmp, font->info.userdata);
-        
+
         font->c[i].tx = x;
 
         x += font->c[i].bw;
     }
     SDL_FreeFormat(fmt);
-    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormatFrom(bitmap, tw, th, 1, tw * 4, SDL_PIXELFORMAT_RGBA32);
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(poti()->render, surf);
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(bitmap, tw, th, 1, tw * 4, SDL_PIXELFORMAT_RGBA32);
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(poti()->render, surf);
     SDL_FreeSurface(surf);
     free(bitmap);
     font->tex = tex;
     return 1;
 }
 
-static Font* s_load_font(const i8 *filename, i32 font_size) {
-    Font *font = malloc(sizeof(*font));
+static Font* s_load_font(const i8* filename, i32 font_size) {
+    Font* font = malloc(sizeof(*font));
     if (!font) {
         fprintf(stderr, "Failed to alloc memory for font\n");
         exit(EXIT_FAILURE);
     }
     size_t buf_size;
-    i8 *buf = poti()->read_file(filename, &buf_size);
+    i8* buf = poti()->read_file(filename, &buf_size);
     poti()->init_font(font, buf, buf_size, font_size);
     free(buf);
     return font;
 }
 
-int s_setup_function_ptrs(struct Context *ctx) {
+int s_setup_function_ptrs(struct Context* ctx) {
     ctx->read_file = s_read_file;
     if (poti()->is_packed)
         ctx->read_file = s_read_file_packed;
@@ -2624,11 +2840,11 @@ int s_setup_function_ptrs(struct Context *ctx) {
     return 1;
 }
 
-u32 s_read_and_mix_pcm_frames(AudioBuffer *buffer, f32 *output, u32 frames) {
+u32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, f32* output, u32 frames) {
     f32 temp[4096];
     u32 temp_cap_in_frames = ma_countof(temp) / AUDIO_DEVICE_CHANNELS;
     u32 total_frames_read = 0;
-    ma_decoder *decoder = &buffer->decoder;
+    ma_decoder* decoder = &buffer->decoder;
     f32 volume = buffer->volume;
     f32 size = buffer->size * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
 
@@ -2643,7 +2859,8 @@ u32 s_read_and_mix_pcm_frames(AudioBuffer *buffer, f32 *output, u32 frames) {
 
         if (buffer->usage == AUDIO_STREAM) {
             frames_read_this_iteration = (u32)ma_decoder_read_pcm_frames(decoder, temp, frames_to_read_this_iteration);
-        } else {
+        }
+        else {
             frames_read_this_iteration = frames_to_read_this_iteration;
             u32 aux = frames_to_read_this_iteration * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
             memcpy(temp, buffer->data + buffer->offset, aux);
@@ -2669,20 +2886,21 @@ u32 s_read_and_mix_pcm_frames(AudioBuffer *buffer, f32 *output, u32 frames) {
     return total_frames_read;
 }
 
-void s_audio_callback(ma_device *device, void *output, const void *input, ma_uint32 frame_count) {
-    f32 *out = (f32*)output;
-    
+void s_audio_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
+    f32* out = (f32*)output;
+
     ma_mutex_lock(&poti()->audio.lock);
     i32 i;
     for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
-        AudioBuffer *buffer = &poti()->audio.buffers[i];
+        AudioBuffer* buffer = &poti()->audio.buffers[i];
         if (buffer->playing && buffer->loaded && !buffer->paused) {
             u32 frames_read = s_read_and_mix_pcm_frames(buffer, out, frame_count);
             if (frames_read < frame_count) {
                 if (buffer->loop) {
                     ma_decoder_seek_to_pcm_frame(&buffer->decoder, 0);
                     buffer->offset = 0;
-                } else {
+                }
+                else {
                     buffer->playing = 0;
                 }
             }
@@ -2690,11 +2908,4 @@ void s_audio_callback(ma_device *device, void *output, const void *input, ma_uin
     }
     ma_mutex_unlock(&poti()->audio.lock);
     (void)input;
-}
-
-int main(int argc, char ** argv) {
-    poti_init();
-    poti_loop();
-    poti_quit();
-    return 1;
 }

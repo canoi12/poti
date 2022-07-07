@@ -2,7 +2,7 @@
 #include "stb_image.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
-// #include "stb_truetype.h"
+#include "stb_truetype.h"
 
 #define SBTAR_IMPLEMENTATION
 #include "sbtar.h"
@@ -25,10 +25,4 @@
 #undef STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.h"
 
-#define STB_RECT_PACK_IMPLEMENTATION
-#define NK_INCLUDE_FIXED_TYPES
-#define NK_INCLUDE_STANDARD_IO
-#define NK_INCLUDE_DEFAULT_ALLOCATOR
-#define NK_INCLUDE_DEFAULT_FONT
-#define NK_IMPLEMENTATION
-#include "nuklear/nuklear.h"
+#include "microui/src/microui.c"
