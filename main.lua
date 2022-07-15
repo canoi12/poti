@@ -17,17 +17,3 @@ function poti.draw()
     poti.render.color(255, 255, 255)
     poti.render.circle(64+x, 64, 12)
 end
-
-function poti.draw_gui()
-    if poti.gui.begin_window("Testing", {64, 64, 256, 128}) then
-        if poti.gui.button("bora carai") then print("hehe") end
-        poti.gui.end_window()
-    end
-end
-
-function poti.key_pressed(key)
-end
-
-function poti.window_resized(wid, w, h)
-    print(w, h)
-end

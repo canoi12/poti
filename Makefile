@@ -8,7 +8,7 @@ LUA_DIR = external/lua/src
 
 TARGET ?= Linux
 ifeq ($(OS), Windows_NT)
-	TARGET := Window
+	TARGET := Windows
 endif
 
 LUA_SRC = $(wildcard $(LUA_DIR)/*.c)
