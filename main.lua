@@ -3,8 +3,7 @@ local time = 0
 local played = false
 
 function poti.load()
-    print("ok")
-    audio = poti.Audio("som.wav", "static")
+    -- audio = poti.Audio("som.wav", "static")
     -- audio:play()
 end
 
@@ -19,8 +18,16 @@ function poti.draw()
     poti.render.circle(64+x, 64, 12)
 end
 
-function poti.key_pressed(key)
-    if key == "space" then
-        audio:play()
+function poti.draw_gui()
+    if poti.gui.begin_window("Testing", {64, 64, 256, 128}) then
+        if poti.gui.button("bora carai") then print("hehe") end
+        poti.gui.end_window()
     end
+end
+
+function poti.key_pressed(key)
+end
+
+function poti.window_resized(wid, w, h)
+    print(w, h)
 end

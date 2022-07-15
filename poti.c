@@ -193,10 +193,10 @@ static const i8 *_err_func =
 "   local trace = debug.traceback('', 1)\n"
 "    poti.update = function() end\n"
 "    poti.draw = function()\n"
-"       poti.clear(0, 0, 0)\n"
-"       poti.print('error', 32)\n"
-"       poti.print(msg, 32, 16)\n"
-"       poti.print(trace, 32, 32)\n"
+"       poti.render.clear(0, 0, 0)\n"
+"       poti.render.print('error', 32)\n"
+"       poti.render.print(msg, 32, 16)\n"
+"       poti.render.print(trace, 32, 32)\n"
 "    end\n"
 "end\n"
 "local function _err(msg)\n"
@@ -1745,25 +1745,6 @@ int l_poti_audio__gc(lua_State *L) {
  * Draw
  *********************************/
 
-int luaopen_render(lua_State* L) {
-    luaL_Reg reg[] = {
-        {"mode", l_poti_render_mode},
-        {"clear", l_poti_render_clear},
-        {"color", l_poti_render_color},
-        {"target", l_poti_render_target},
-        {"point", l_poti_render_point},
-        {"line", l_poti_render_line},
-        {"circle", l_poti_render_circle},
-        {"rectangle", l_poti_render_rectangle},
-        {"triangle", l_poti_render_triangle},
-        {"print", l_poti_render_print},
-        {NULL, NULL}
-    };
-
-    luaL_newlib(L, reg);
-
-    return 1;
-}
 
 int l_poti_render_clear(lua_State *L) {
     color_t color = {0, 0, 0, 255};
@@ -2070,6 +2051,31 @@ int l_poti_render_print(lua_State *L) {
     return 0;
 }
 
+static struct {
+    const char *name;
+    int value;
+} blend_modes[] = {
+    {"none", SDL_BLENDMODE_NONE},
+    {"alpha", SDL_BLENDMODE_BLEND},
+    {"add", SDL_BLENDMODE_ADD},
+    {"mod", SDL_BLENDMODE_MOD}
+};
+
+static int l_poti_render_blend_mode(lua_State *L) {
+    int i;
+    SDL_BlendMode mode;
+    SDL_GetRenderDrawBlendMode(poti()->render, &mode);
+    const char *mode_str = luaL_checkstring(L, 1);
+    for (i = 0; i < 4; i++) {
+        if (!strcmp(mode_str, blend_modes[i].name)) {
+            mode = blend_modes[i].value;
+            break;
+        }
+    }
+
+    return 0;
+}
+
 void s_font_print(Font* font, float x, float y, const char* text) {
     u8* p = (u8*)text;
     float x0 = 0, y0 = 0;
@@ -2095,7 +2101,7 @@ i32 s_get_text_width(Font *font, const i8* text, i32 len) {
     while (*p && len--) {
         int codepoint;
         p = poti()->utf8_codepoint(p, &codepoint);
-        SDL_Rect src, dest;
+        SDL_Rect src;
         SDL_Point pos;
         s_char_rect(font, codepoint, &x0, &y0, &pos, &src, 0);
         width += src.w;
@@ -2105,6 +2111,27 @@ i32 s_get_text_width(Font *font, const i8* text, i32 len) {
 
 i32 s_get_text_height(Font *font) {
     return font->height;
+}
+
+int luaopen_render(lua_State* L) {
+    luaL_Reg reg[] = {
+        {"mode", l_poti_render_mode},
+        {"clear", l_poti_render_clear},
+        {"color", l_poti_render_color},
+        {"target", l_poti_render_target},
+        {"point", l_poti_render_point},
+        {"line", l_poti_render_line},
+        {"circle", l_poti_render_circle},
+        {"rectangle", l_poti_render_rectangle},
+        {"triangle", l_poti_render_triangle},
+        {"print", l_poti_render_print},
+        {"blend_mode", l_poti_render_blend_mode},
+        {NULL, NULL}
+    };
+
+    luaL_newlib(L, reg);
+
+    return 1;
 }
 
 /*********************************
@@ -2602,6 +2629,189 @@ int luaopen_gui(lua_State* L) {
     return 1;
 }
 
+/*=================================*
+ *             Window              *
+ *=================================*/
+
+static int l_poti_window_title(lua_State *L) {
+    const char *title = NULL;
+    if (!lua_isnil(L, 1)) {
+        title = luaL_checkstring(L, 1);
+        SDL_SetWindowTitle(poti()->window, title);
+    }
+
+    lua_pushstring(L, SDL_GetWindowTitle(poti()->window));
+
+    return 1;
+}
+
+static int l_poti_window_width(lua_State *L) {
+    int width = 0;
+    if (!lua_isnil(L, 1)) {
+        int height;
+        width = luaL_checkinteger(L, 1);
+        SDL_GetWindowSize(poti()->window, NULL, &height);
+        SDL_SetWindowSize(poti()->window, width, height);
+    }
+    else SDL_GetWindowSize(poti()->window, &width, NULL);
+
+    lua_pushinteger(L, width);
+    return 1;
+}
+
+static int l_poti_window_height(lua_State *L) {
+    int height = 0;
+    if (!lua_isnil(L, 1)) {
+        int width;
+        height = luaL_checkinteger(L, 1);
+        SDL_GetWindowSize(poti()->window, &width, NULL);
+        SDL_SetWindowSize(poti()->window, width, height);
+    }
+    else SDL_GetWindowSize(poti()->window, NULL, &height);
+
+    lua_pushinteger(L, height);
+    return 1;
+}
+
+static int l_poti_window_size(lua_State *L) {
+    int size[2];
+
+    if (lua_gettop(L) <= 0) SDL_GetWindowSize(poti()->window, &size[0], &size[1]);
+
+    for (int i = 0; i < lua_gettop(L); i++) {
+        size[i] = luaL_checkinteger(L, i+1);
+    }
+    
+
+    lua_pushinteger(L, size[0]);
+    lua_pushinteger(L, size[1]);
+    return 2;
+}
+
+static int l_poti_window_position(lua_State *L) {
+    int pos[2];
+
+    SDL_GetWindowPosition(poti()->window, &pos[0], &pos[1]);
+    int top = lua_gettop(L);
+    
+    if (top > 0) {
+        for (int i = 0; i < top; i++) {
+            pos[i] = luaL_checkinteger(L, i+1);
+        }
+        SDL_SetWindowPosition(poti()->window, pos[0], pos[1]);
+    }
+
+    lua_pushinteger(L, pos[0]);
+    lua_pushinteger(L, pos[1]);
+    return 2;
+}
+
+static int l_poti_window_resizable(lua_State *L) {
+    int resizable = 0;
+    Uint32 flags = SDL_GetWindowFlags(poti()->window);
+
+    resizable = flags & SDL_WINDOW_RESIZABLE;
+
+    if (!lua_isnil(L, 1)) {
+        resizable = lua_toboolean(L, 1);
+        SDL_SetWindowResizable(poti()->window, resizable);
+    }
+
+    lua_pushboolean(L, resizable);
+
+    return 1;
+}
+
+static int l_poti_window_bordered(lua_State *L) {
+    int bordered = 0;
+    Uint32 flags = SDL_GetWindowFlags(poti()->window);
+
+    bordered = ~flags & SDL_WINDOW_BORDERLESS;
+
+    if (!lua_isnil(L, 1)) {
+        bordered = lua_toboolean(L, 1);
+        SDL_SetWindowBordered(poti()->window, bordered);
+    }
+
+    lua_pushboolean(L, bordered);
+    return 1;
+}
+
+static int l_poti_window_border_size(lua_State *L) {
+
+    int borders[4];
+
+    SDL_GetWindowBordersSize(poti()->window, &borders[0], &borders[1], &borders[2], &borders[3]);
+
+    for (int i = 0; i < 4; i++) lua_pushinteger(L, borders[i]);
+
+    return 4;
+}
+
+static int l_poti_window_maximize(lua_State *L) {
+    SDL_MaximizeWindow(poti()->window);
+    return 0;
+}
+
+static int l_poti_window_minimize(lua_State *L) {
+    SDL_MinimizeWindow(poti()->window);
+    return 0;
+}
+
+static int l_poti_window_restore(lua_State *L) {
+    SDL_RestoreWindow(poti()->window);
+    return 0;
+}
+
+static struct {
+    const char *name;
+    int value;
+} message_box_types[] = {
+    {"error", SDL_MESSAGEBOX_ERROR},
+    {"warning", SDL_MESSAGEBOX_WARNING},
+    {"information", SDL_MESSAGEBOX_INFORMATION}
+};
+
+static int l_poti_window_simple_message_box(lua_State *L) {
+    const char *type = luaL_checkstring(L, 1);
+    const char *title = luaL_checkstring(L, 2);
+    const char *message = luaL_checkstring(L, 3);
+
+    int flags = 0;
+    for (int i = 0; i < 3; i++) {
+        if (!strcmp(type, message_box_types[i].name)) {
+            flags = message_box_types[i].value;
+            break;
+        }
+    }
+    SDL_ShowSimpleMessageBox(flags, title, message, poti()->window);
+
+    return 0;
+}
+
+
+static int luaopen_window(lua_State *L) {
+    luaL_Reg reg[] = {
+        {"title", l_poti_window_title},
+        {"width", l_poti_window_width},
+        {"height", l_poti_window_height},
+        {"size", l_poti_window_size},
+        {"position", l_poti_window_position},
+        {"resizable", l_poti_window_resizable},
+        {"bordered", l_poti_window_bordered},
+        {"border_size", l_poti_window_border_size},
+        {"maximize", l_poti_window_maximize},
+        {"minimize", l_poti_window_minimize},
+        {"restore", l_poti_window_restore},
+        {"simple_message_box", l_poti_window_simple_message_box},
+        {NULL, NULL}
+    };
+
+    luaL_newlib(L, reg);
+
+    return 1;
+}
+
 int luaopen_poti(lua_State* L) {
     luaL_Reg reg[] = {
         {"ver", l_poti_ver},
@@ -2636,6 +2846,7 @@ int luaopen_poti(lua_State* L) {
         {"event", luaopen_event},
         {"render", luaopen_render},
         {"gui", luaopen_gui},
+        {"window", luaopen_window},
         {NULL, NULL}
     };
 
