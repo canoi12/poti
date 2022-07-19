@@ -179,6 +179,8 @@ struct Context {
     int(*point_from_table)(lua_State*, i32, SDL_Point*);
     int(*rect_from_table)(lua_State*, i32, SDL_Rect*);
 
+    char basepath[512];
+
     mu_Context ui;
 };
 
@@ -209,6 +211,8 @@ static const i8 *_err_func =
 
 static const i8 *_initialize =
 "local traceback = debug.traceback\n"
+"local path = poti.filesystem.base_path()\n"
+"package.path = path .. '/?.lua;' .. path .. '/?/init.lua;' .. package.path\n" 
 "local main_state = false\n"
 "local function _err(msg)\n"
 "   local trace = traceback('', 1)\n"
@@ -370,6 +374,9 @@ static int l_poti_gui_end_window(lua_State* L);
 static int s_setup_function_ptrs(struct Context *ctx);
 
 int poti_init(int argc, char **argv) {
+    if (argc > 1) strcpy(poti()->basepath, argv[1]);
+    else strcpy(poti()->basepath, ".");
+
     poti()->L = luaL_newstate();
     lua_State *L = poti()->L;
 
@@ -1082,6 +1089,29 @@ int l_poti_callback_textediting(lua_State* L) {
     lua_pushnumber(L, event->edit.length);
     poti_call("text_edit", 4, 0);
     return 0;
+}
+
+/*=================================*
+ *           Filesystem            *
+ *=================================*/
+
+static int l_poti_filesystem_base_path(lua_State *L) {
+    lua_pushstring(L, poti()->basepath);
+    return 1;
+}
+
+static int l_poti_filesystem_pref_path(lua_State *L) {
+    return 0;
+}
+
+static int luaopen_filesystem(lua_State *L) {
+    luaL_Reg reg[] = {
+        {"base_path", l_poti_filesystem_base_path},
+        {"pref_path", l_poti_filesystem_pref_path},
+        {NULL, NULL}
+    };
+    luaL_newlib(L, reg);
+    return 1;
 }
 
 /*=================================*
@@ -2731,6 +2761,7 @@ int luaopen_poti(lua_State* L) {
 
     struct { char* name; int(*fn)(lua_State*); } libs[] = {
         /* Modules */
+        {"filesystem", luaopen_filesystem},
         {"gamepad", luaopen_gamepad},
         {"joystick", luaopen_joystick},
         {"mouse", luaopen_mouse},
@@ -2764,13 +2795,15 @@ int main(int argc, char ** argv) {
     return 1;
 }
 
+char read_buffer[1024];
 /* Static functions implementations */
 static i8* s_read_file(const char* filename, size_t* size) {
     FILE* fp;
+    sprintf(read_buffer, "%s/%s", poti()->basepath, filename);
 #if defined(_WIN32)
-    fopen_s(&fp, filename, "rb+");
+    fopen_s(&fp, read_buffer, "rb+");
 #else
-    fp = fopen(filename, "rb");
+    fp = fopen(read_buffer, "rb");
 #endif
     if (!fp) return NULL;
     fseek(fp, 0, SEEK_END);
