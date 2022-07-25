@@ -2,9 +2,12 @@ NAME = poti
 PREFIX =
 CC = cc
 AR = ar
-CLEAR_FILES = 
+CLEAR_FILES =
+
+USEJIT = 0
 
 LUA_DIR = external/lua/src
+GL3W_DIR = external/gl3w
 
 TARGET ?= Linux
 ifeq ($(OS), Windows_NT)
@@ -16,7 +19,7 @@ LUA_SRC := $(filter-out $(LUA_DIR)/lua.c,$(LUA_SRC))
 LUA_SRC := $(filter-out $(LUA_DIR)/luac.c,$(LUA_SRC))
 
 SRC = poti.c impl.c $(LUA_SRC)
-INCL = -Iexternal/ -I$(LUA_DIR)
+INCL = -Iexternal/ -I$(LUA_DIR) -I$(GL3W_DIR)/include
 EXE = .bin
 
 ifeq ($(TARGET), Windows)
@@ -38,7 +41,7 @@ else
 		LFLAGS = -lm -lpthread -lSDL2 -ldl `sdl2-config --libs`
 	endif
 endif
-CDEFS = 
+CDEFS =
 
 OUT = $(NAME)$(EXE)
 GEN = gen$(EXE)
@@ -68,7 +71,7 @@ $(OUT): poti.h $(OBJ)
 	@echo "** BUILDING $@"
 	@echo "********************************************************"
 	@echo $(OS)
-	$(PREFIX)$(CC) $(OBJ) -o $(OUT) $(INCL) $(CFLAGS) $(LFLAGS) $(CDEFS)
+	$(PREFIX)$(CC) $(OBJ) -o $(OUT) $(INCL) $(LFLAGS) $(CDEFS)
 
 %.o: %.c
 	@echo "********************************************************"

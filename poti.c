@@ -11,6 +11,8 @@
 #include <emscripten.h>
 #endif
 
+#include "GL/gl3w.h"
+
 #ifdef _WIN32
     #define SDL_MAIN_HANDLED
 #ifdef __MINGW32__
@@ -20,6 +22,7 @@
 #endif
 #else
     #include <SDL2/SDL.h>
+    #include <SDL2/SDL_opengl.h>
 #endif
 
 #include "miniaudio.h"
@@ -30,6 +33,7 @@
 #include "microui/src/microui.h"
 
 #include "poti.h"
+#include "linmath.h"
 
 #define MAX_AUDIO_BUFFER_CHANNELS 255
 
@@ -40,6 +44,7 @@
 
 #define TEXTURE_CLASS "Texture"
 #define FONT_CLASS "Font"
+#define SHADER_CLASS "Shader"
 
 #define AUDIO_CLASS "Audio"
 
@@ -47,6 +52,15 @@
 #define GAMEPAD_CLASS "GamePad"
 
 #define poti() (&_ctx)
+#define POTI() (&_ctx)
+#define RENDER() (&poti()->render)
+
+#define M_PI 3.14159
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define CLAMP(v, a, b) (MAX(a, MIN(v, b)))
+#define DEG2RAD(deg) ((deg)*(M_PI/180.0))
+#define RAD2DEG(rad) ((rad)*(180.0/M_PI))
 
 #define AUDIO_DEVICE_FORMAT ma_format_f32
 #define AUDIO_DEVICE_CHANNELS 2
@@ -72,8 +86,9 @@ typedef struct Audio Audio;
 typedef struct AudioData AudioData;
 typedef struct AudioBuffer AudioBuffer;
 
-typedef SDL_Texture Texture;
+typedef struct Texture Texture;
 typedef struct Font Font;
+typedef struct Shader Shader;
 
 typedef SDL_Window Window;
 typedef SDL_Renderer Render;
@@ -133,10 +148,41 @@ struct Font {
     void *data;
 };
 
+struct Texture {
+    u32 handle;
+    u32 fbo;
+    i32 width, height;
+    i32 wrap[2];
+    i32 filter[2];
+};
+
+struct Shader {
+    u32 handle;
+    u32 u_world, u_modelview;
+};
+
 struct Context {
     lua_State *L;
     Window *window;
-    Render *render;
+    //Render *render;
+    struct {
+        i8 draw_mode;
+        float color[4];
+        Shader *def_shader;
+
+        Texture *tex;
+        Texture *target;
+
+        Texture *white;
+        Shader *shader;
+
+        u32 vao;
+        struct {
+            u32 handle;
+            void *data;
+        } buffer;
+    } render;
+    SDL_GLContext gl_context;
     Event event;
 
     struct {
@@ -162,8 +208,6 @@ struct Context {
     i32 fps, frames;
 
     const Uint8 *keys;
-    color_t color;
-    i8 draw_mode;
     sbtar_t pkg;
 
     i8 is_packed;
@@ -172,12 +216,13 @@ struct Context {
     Font default_font;
     Font *font;
     i32(*init_font)(Font*, const void*, size_t, i32);
-    Font*(*load_font)(const i8*, i32);
+    i32(*init_texture)(Texture*, i8, i32, i32, i32, void*);
+
     u8*(*utf8_codepoint)(u8*, i32*);
 
-    int(*flip_from_table)(lua_State*, i32, i32*);
-    int(*point_from_table)(lua_State*, i32, SDL_Point*);
-    int(*rect_from_table)(lua_State*, i32, SDL_Rect*);
+    i32(*flip_from_table)(lua_State*, i32, i32*);
+    i32(*point_from_table)(lua_State*, i32, SDL_Point*);
+    i32(*rect_from_table)(lua_State*, i32, SDL_Rect*);
 
     char basepath[512];
 
@@ -220,7 +265,7 @@ static const i8 *_initialize =
 "   poti.error(msg, trace)\n"
 "end\n"
 "local function _mainLoop()\n"
-"   if poti.update then poti.update(poti.delta()) end\n"
+"   if poti.update then poti.update(poti.timer.delta()) end\n"
 "   if poti.draw then poti.draw() end\n"
 "   poti.gui_begin()\n"
 "   if poti.draw_gui then poti.draw_gui() end\n"
@@ -243,6 +288,30 @@ static const i8 *_initialize =
 "main_state = xpcall(function() require 'main' end, _err)\n"
 "return _initialize";
 
+const char *vert_shader =
+"in vec2 in_Pos;\n"
+"in vec4 in_Color;\n"
+"in vec2 in_Texcoord;\n"
+"varying vec4 v_Color;\n"
+"varying vec2 v_Texcoord;\n"
+"uniform mat4 u_World;\n"
+"uniform mat4 u_Modelview;\n"
+"void main() {\n"
+"  gl_Position = u_World * u_Modelview * vec4(in_Pos.x, in_Pos.y, 0.0, 1.0);\n"
+"  v_Color = in_Color;\n"
+"  v_Texcoord = in_Texcoord;\n"
+"}";
+
+const char *frag_shader =
+"out vec4 FragColor;\n"
+"varying vec4 v_Color;\n"
+"varying vec2 v_Texcoord;\n"
+"uniform sampler2D u_Texture;\n"
+"void main() {\n"
+"  FragColor = v_Color * texture2D(u_Texture, v_Texcoord);\n"
+"}";
+
+
 static int s_get_rect_from_table(lua_State* L, int idx, SDL_Rect* out);
 static int s_get_point_from_table(lua_State* L, int idx, SDL_Point* out);
 static void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SDL_Rect *rect, int width);
@@ -253,28 +322,12 @@ static void s_font_print(Font* font, float x, float y, const char* text);
 static i32 s_get_text_width(Font *font, const i8* text, i32 len);
 static i32 s_get_text_height(Font *font);
 
-static int poti_init(int argc, char **argv);
-static int poti_loop(void);
-static int poti_quit(void);
+static int s_compile_shader(const char *source, int type);
+static int s_load_program(int vert, int frag);
+
+static int s_setup_function_ptrs(struct Context *ctx);
 
 static int poti_call(const char *name, int args, int ret);
-
-static int poti_register_meta(const char *name, luaL_Reg *reg);
-
-static int luaopen_poti(lua_State *L);
-static int luaopen_event(lua_State *L);
-static int luaopen_keyboard(lua_State* L);
-static int luaopen_mouse(lua_State* L);
-static int luaopen_joystick(lua_State *L);
-static int luaopen_gamepad(lua_State *L);
-static int luaopen_render(lua_State* L);
-static int luaopen_gui(lua_State* L);
-
-/*=================================*
- *              Core               *
- *=================================*/
-static int l_poti_ver(lua_State *L);
-static int l_poti_delta(lua_State *L);
 
 /*=================================*
  *              Event              *
@@ -346,228 +399,6 @@ static int l_poti_file_seek(lua_State *L);
 static int l_poti_file_tell(lua_State *L);
 static int poti_list_folder(lua_State *L);
 
-/*=================================*
- *            Graphics             *
- *=================================*/
-
-/* Draw */
-static int l_poti_render_clear(lua_State *L);
-static int l_poti_render_color(lua_State *L);
-static int l_poti_render_mode(lua_State *L);
-static int l_poti_render_target(lua_State *L);
-static int l_poti_render_point(lua_State *L);
-static int l_poti_render_line(lua_State *L);
-static int l_poti_render_rectangle(lua_State *L);
-static int l_poti_render_circle(lua_State *L);
-static int l_poti_render_triangle(lua_State *L);
-static int l_poti_render_print(lua_State *L);
-
-/*=================================*
- *               GUI               *
- *=================================*/
-
-static int l_poti_gui_begin(lua_State* L);
-static int l_poti_gui_end(lua_State* L);
-static int l_poti_gui_begin_window(lua_State* L);
-static int l_poti_gui_end_window(lua_State* L);
-
-static int s_setup_function_ptrs(struct Context *ctx);
-
-int poti_init(int argc, char **argv) {
-    if (argc > 1) strcpy(poti()->basepath, argv[1]);
-    else strcpy(poti()->basepath, ".");
-
-    poti()->L = luaL_newstate();
-    lua_State *L = poti()->L;
-
-    /* init table for store types metatables */
-    lua_newtable(L);
-    lua_rawsetp(L, LUA_REGISTRYINDEX, &lr_meta);
-
-    /* init table to store audio data */
-    lua_newtable(L);
-    lua_newtable(L);
-    lua_rawseti(L, -2, AUDIO_STREAM);
-    lua_newtable(L);
-    lua_rawseti(L, -2, AUDIO_STATIC);
-    lua_rawsetp(L, LUA_REGISTRYINDEX, &lr_audio_data);
-
-
-    luaL_openlibs(L);
-    luaL_requiref(L, "poti", luaopen_poti, 1);
-
-    char title[100];
-    sprintf(title, "poti %s", POTI_VER);
-
-    mu_init(&poti()->ui);
-    poti()->ui.text_height = s_get_text_height;
-    poti()->ui.text_width = s_get_text_width;
-    poti()->ui.style->font = &poti()->default_font;
-
-#ifdef __EMSCRIPTEN__
-    u32 flags = SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER |
-    SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_SENSOR | SDL_INIT_AUDIO;
-#else
-    u32 flags = SDL_INIT_EVERYTHING;
-#endif
-    if (SDL_Init(flags)) {
-        fprintf(stderr, "Failed to init SDL2: %s\n", SDL_GetError());
-        exit(0);
-    }
-
-    SDL_Window *window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
-    if (!window) {
-        fprintf(stderr, "Failed to create SDL2 window: %s\n", SDL_GetError());
-        exit(0);
-    }
-    SDL_Renderer *render = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    poti()->keys = SDL_GetKeyboardState(NULL);
-    poti()->window = window;
-    poti()->render = render;
-
-    if (sbtar_open(&poti()->pkg, "game.pkg"))
-        poti()->is_packed = 1;
-    s_setup_function_ptrs(poti());
-
-
-    poti()->init_font(&poti()->default_font, _font_ttf, _font_ttf_size, 8);
-
-    ma_context_config ctx_config = ma_context_config_init();
-    ma_result result = ma_context_init(NULL, 0, &ctx_config, &poti()->audio.ctx);
-    if (result != MA_SUCCESS) {
-        fprintf(stderr, "Failed to init audio context\n");
-        exit(0);
-    }
-
-    ma_device_config dev_config = ma_device_config_init(ma_device_type_playback);
-    dev_config.playback.pDeviceID = NULL;
-    dev_config.playback.format = AUDIO_DEVICE_FORMAT;
-    dev_config.playback.channels = AUDIO_DEVICE_CHANNELS;
-    dev_config.sampleRate = AUDIO_DEVICE_SAMPLE_RATE;
-    dev_config.pUserData = poti();
-    dev_config.dataCallback = s_audio_callback;
-
-    result = ma_device_init(&poti()->audio.ctx, &dev_config, &poti()->audio.device);
-    if (result != MA_SUCCESS) {
-        fprintf(stderr, "Failed to init audio device\n");
-        ma_context_uninit(&poti()->audio.ctx);
-        exit(0);
-    }
-
-    if (ma_device_start(&poti()->audio.device) != MA_SUCCESS) {
-        fprintf(stderr, "Failed to start audio device\n");
-        ma_context_uninit(&poti()->audio.ctx);
-        ma_device_uninit(&poti()->audio.device);
-        exit(0);
-    }
-
-    if (ma_mutex_init(&poti()->audio.ctx, &poti()->audio.lock) != MA_SUCCESS) {
-        fprintf(stderr, "Failed to start audio mutex\n");
-        ma_device_uninit(&poti()->audio.device);
-        ma_context_uninit(&poti()->audio.ctx);
-        exit(0);
-    }
-
-    i32 i;
-    for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
-        AudioBuffer *buffer = &poti()->audio.buffers[i];
-        memset(buffer, 0, sizeof(*buffer));
-        buffer->playing = 0;
-        buffer->volume = 1.f;
-        buffer->pitch = 1.f;
-        buffer->loaded = 0;
-        buffer->paused = 0;
-        buffer->loop = 0;
-    }
-
-    poti()->audio.is_ready = 1;
-
-
-    if (luaL_dostring(L, _err_func) != LUA_OK) {
-        const char *error_buf = lua_tostring(L, -1);
-        fprintf(stderr, "Failed to load poti lua error handler: %s\n", error_buf);
-        exit(0);
-    }
-    lua_rawsetp(L, LUA_REGISTRYINDEX, _err_func);
-
-    if (luaL_dostring(L, _initialize) != LUA_OK) {
-	    const char *error_buf = lua_tostring(L, -1);
-	    fprintf(stderr, "Failed to load poti lua initialize: %s\n", error_buf);
-	    exit(0);
-    }
-    lua_pcall(L, 0, 1, 0);
-    lua_rawsetp(L, LUA_REGISTRYINDEX, &lr_step);
-
-    fprintf(stderr, "Is Packed: %d\n", poti()->is_packed);
-    return 1;
-}
-
-int poti_quit(void) {
-    lua_close(poti()->L);
-    SDL_DestroyWindow(poti()->window);
-    SDL_DestroyRenderer(poti()->render);
-    SDL_Quit();
-    // mo_deinit();
-    if (poti()->audio.is_ready) {
-        ma_mutex_uninit(&poti()->audio.lock);
-        ma_device_uninit(&poti()->audio.device);
-        ma_context_uninit(&poti()->audio.ctx);
-    } else
-        fprintf(stderr, "Audio Module could not be closed, not initialized\n");
-    return 1;
-}
-
-int poti_step(void) {
-    lua_State *L = poti()->L;
-    SDL_Event *event = &poti()->event;
-    lua_rawgetp(poti()->L, LUA_REGISTRYINDEX, &lr_callbacks);
-    while (SDL_PollEvent(event)) {
-        lua_rawgeti(L, -1, event->type);
-        if (!lua_isnil(L, -1)) {
-            lua_pushlightuserdata(L, event);
-            lua_pcall(L, 1, 0, 0);
-        } else lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-    double current_time = SDL_GetTicks();
-    poti()->delta = (current_time - poti()->last_time) / 1000.f;
-    poti()->last_time = current_time;
-
-    lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_step);
-    lua_pcall(L, 0, 0, 0);
-
-    mu_Command* cmd = NULL;
-    while (mu_next_command(&poti()->ui, &cmd)) {
-        switch (cmd->type) {
-        case MU_COMMAND_TEXT: s_font_print(&poti()->default_font, cmd->text.pos.x, cmd->text.pos.y, cmd->text.str); break;
-        case MU_COMMAND_RECT: {
-            SDL_SetRenderDrawColor(poti()->render, cmd->rect.color.r, cmd->rect.color.g, cmd->rect.color.b, cmd->rect.color.a);
-            SDL_Rect r = { cmd->rect.rect.x, cmd->rect.rect.y, cmd->rect.rect.w, cmd->rect.rect.h };
-            SDL_RenderFillRect(poti()->render, &r);
-        }
-        break;
-        case MU_COMMAND_CLIP: {
-            SDL_Rect r = { cmd->clip.rect.x, cmd->clip.rect.y, cmd->clip.rect.w, cmd->clip.rect.h };
-            SDL_RenderSetClipRect(poti()->render, &r);
-        }
-                            break;
-        }
-    }
-    SDL_RenderSetClipRect(poti()->render, NULL);
-    SDL_SetRenderDrawColor(poti()->render, 255, 255, 255, 255);
-
-    SDL_RenderPresent(poti()->render);
-    return 1;
-}
-
-int poti_loop(void) {
-#if defined(__EMSCRIPTEN__)
-    emscripten_set_main_loop(poti_step, 0, 1);
-#else
-    while (!poti()->should_close) poti_step();
-#endif
-    return 1;
-}
 
 int poti_call(const char *name, int args, int ret) {
     lua_State* L = poti()->L;
@@ -593,95 +424,69 @@ int poti_call(const char *name, int args, int ret) {
     return 0;
 }
 
-int poti_register_meta(const char *name, luaL_Reg *reg) {
-    lua_State *L = poti()->L;
-    lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_meta);
-    lua_pushvalue(L, index);
-    lua_setfield(L, -2, name);
-    lua_pop(L, 1);
-    return 0;
-}
-
 /*=================================*
  *              Core               *
  *=================================*/
-int l_poti_ver(lua_State *L) {
+static int l_poti_ver(lua_State *L) {
     lua_pushstring(L, POTI_VER);
     return 1;
 }
 
-int l_poti_delta(lua_State *L) {
+static int l_poti_meta(lua_State *L) {
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_meta);
+    lua_getfield(L, -1, luaL_checkstring(L, 1));
+    lua_remove(L, -2);
+    return 1;
+}
+
+/*=================================*
+ *              Timer              *
+ *=================================*/
+
+static int l_poti_timer_delta(lua_State *L) {
     lua_pushnumber(L, poti()->delta);
+    return 1;
+}
+
+static int l_poti_timer_ticks(lua_State *L) {
+    lua_pushinteger(L, SDL_GetTicks());
+    return 1;
+}
+
+static int l_poti_timer_delay(lua_State *L) {
+    u32 ms = luaL_checkinteger(L, 1);
+    SDL_Delay(ms);
+    return 0;
+}
+
+static int l_poti_timer_performance_counter(lua_State *L) {
+    lua_pushinteger(L, SDL_GetPerformanceCounter());
+    return 1;
+}
+
+static int l_poti_timer_performance_freq(lua_State *L) {
+    lua_pushinteger(L, SDL_GetPerformanceFrequency());
+    return 1;
+}
+
+static int luaopen_timer(lua_State *L) {
+    luaL_Reg reg[] = {
+        {"delta", l_poti_timer_delta},
+        {"ticks", l_poti_timer_ticks},
+        {"delay", l_poti_timer_delay},
+        {"performance_counter", l_poti_timer_performance_counter},
+        {"performance_freq", l_poti_timer_performance_freq},
+        {NULL, NULL}
+    };
+
+    luaL_newlib(L, reg);
+
     return 1;
 }
 
 /*=================================*
  *              Event              *
  *=================================*/
-
-int luaopen_event(lua_State *L) {
-    lua_newtable(L);
-
-    struct {
-        i32 type;
-        lua_CFunction fn;
-    } fn[] = {
-        {SDL_QUIT, l_poti_callback_quit},
-        {SDL_KEYDOWN, l_poti_callback_keypressed},
-        {SDL_KEYUP, l_poti_callback_keyreleased},
-        {SDL_MOUSEMOTION, l_poti_callback_mousemotion},
-        {SDL_MOUSEBUTTONDOWN, l_poti_callback_mousebutton},
-        {SDL_MOUSEBUTTONUP, l_poti_callback_mousebutton},
-        {SDL_MOUSEWHEEL, l_poti_callback_mousewheel},
-        {SDL_JOYAXISMOTION, l_poti_callback_joyaxismotion},
-        {SDL_JOYBALLMOTION, l_poti_callback_joyballmotion},
-        {SDL_JOYHATMOTION, l_poti_callback_joyhatmotion},
-        {SDL_JOYBUTTONDOWN, l_poti_callback_joybutton},
-        {SDL_JOYBUTTONUP, l_poti_callback_joybutton},
-        {SDL_JOYDEVICEADDED, l_poti_callback_joydevice},
-        {SDL_JOYDEVICEREMOVED, l_poti_callback_joydevice},
-        {SDL_CONTROLLERAXISMOTION, l_poti_callback_gamepadaxismotion},
-        {SDL_CONTROLLERBUTTONDOWN, l_poti_callback_gamepadbutton},
-        {SDL_CONTROLLERBUTTONUP, l_poti_callback_gamepadbutton},
-        {SDL_CONTROLLERDEVICEADDED, l_poti_callback_gamepaddevice},
-        {SDL_CONTROLLERDEVICEREMOVED, l_poti_callback_gamepaddevice},
-        {SDL_CONTROLLERDEVICEREMAPPED, l_poti_callback_gamepadremap},
-        {SDL_FINGERDOWN, l_poti_callback_finger},
-        {SDL_FINGERUP, l_poti_callback_finger},
-        {SDL_FINGERMOTION, l_poti_callback_fingermotion},
-        {SDL_DOLLARGESTURE, l_poti_callback_dollargesture},
-        {SDL_DOLLARRECORD, l_poti_callback_dollarrecord},
-        {SDL_MULTIGESTURE, l_poti_callback_multigesture},
-        {SDL_CLIPBOARDUPDATE, l_poti_callback_clipboardupdate},
-        {SDL_DROPFILE, l_poti_callback_dropfile},
-        {SDL_DROPTEXT, l_poti_callback_droptext},
-        {SDL_DROPBEGIN, l_poti_callback_dropbegin},
-        {SDL_DROPCOMPLETE, l_poti_callback_dropcomplete},
-        {SDL_AUDIODEVICEADDED, l_poti_callback_audiodevice},
-        {SDL_AUDIODEVICEREMOVED, l_poti_callback_audiodevice},
-        {SDL_WINDOWEVENT, l_poti_callback_windowevent},
-        {SDL_TEXTINPUT, l_poti_callback_textinput},
-        {SDL_TEXTEDITING, l_poti_callback_textediting},
-        {-1, NULL}
-    };
-
-    i32 i;
-    for (i = 0; fn[i].type != -1; i++) {
-        lua_pushinteger(L, fn[i].type);
-        lua_pushcfunction(L, fn[i].fn);
-        lua_settable(L, -3);
-    }
-    lua_rawsetp(L, LUA_REGISTRYINDEX, &lr_callbacks);
-
-    luaL_Reg reg[] = {
-        {NULL, NULL}
-    };
-
-    luaL_newlib(L, reg);
-
-
-    return 1;
-}
 
 int l_poti_start_textinput(lua_State* L) {
     SDL_StartTextInput();
@@ -1091,6 +896,70 @@ int l_poti_callback_textediting(lua_State* L) {
     return 0;
 }
 
+static int luaopen_event(lua_State *L) {
+    lua_newtable(L);
+
+    struct {
+        i32 type;
+        lua_CFunction fn;
+    } fn[] = {
+        {SDL_QUIT, l_poti_callback_quit},
+        {SDL_KEYDOWN, l_poti_callback_keypressed},
+        {SDL_KEYUP, l_poti_callback_keyreleased},
+        {SDL_MOUSEMOTION, l_poti_callback_mousemotion},
+        {SDL_MOUSEBUTTONDOWN, l_poti_callback_mousebutton},
+        {SDL_MOUSEBUTTONUP, l_poti_callback_mousebutton},
+        {SDL_MOUSEWHEEL, l_poti_callback_mousewheel},
+        {SDL_JOYAXISMOTION, l_poti_callback_joyaxismotion},
+        {SDL_JOYBALLMOTION, l_poti_callback_joyballmotion},
+        {SDL_JOYHATMOTION, l_poti_callback_joyhatmotion},
+        {SDL_JOYBUTTONDOWN, l_poti_callback_joybutton},
+        {SDL_JOYBUTTONUP, l_poti_callback_joybutton},
+        {SDL_JOYDEVICEADDED, l_poti_callback_joydevice},
+        {SDL_JOYDEVICEREMOVED, l_poti_callback_joydevice},
+        {SDL_CONTROLLERAXISMOTION, l_poti_callback_gamepadaxismotion},
+        {SDL_CONTROLLERBUTTONDOWN, l_poti_callback_gamepadbutton},
+        {SDL_CONTROLLERBUTTONUP, l_poti_callback_gamepadbutton},
+        {SDL_CONTROLLERDEVICEADDED, l_poti_callback_gamepaddevice},
+        {SDL_CONTROLLERDEVICEREMOVED, l_poti_callback_gamepaddevice},
+        {SDL_CONTROLLERDEVICEREMAPPED, l_poti_callback_gamepadremap},
+        {SDL_FINGERDOWN, l_poti_callback_finger},
+        {SDL_FINGERUP, l_poti_callback_finger},
+        {SDL_FINGERMOTION, l_poti_callback_fingermotion},
+        {SDL_DOLLARGESTURE, l_poti_callback_dollargesture},
+        {SDL_DOLLARRECORD, l_poti_callback_dollarrecord},
+        {SDL_MULTIGESTURE, l_poti_callback_multigesture},
+        {SDL_CLIPBOARDUPDATE, l_poti_callback_clipboardupdate},
+        {SDL_DROPFILE, l_poti_callback_dropfile},
+        {SDL_DROPTEXT, l_poti_callback_droptext},
+        {SDL_DROPBEGIN, l_poti_callback_dropbegin},
+        {SDL_DROPCOMPLETE, l_poti_callback_dropcomplete},
+        {SDL_AUDIODEVICEADDED, l_poti_callback_audiodevice},
+        {SDL_AUDIODEVICEREMOVED, l_poti_callback_audiodevice},
+        {SDL_WINDOWEVENT, l_poti_callback_windowevent},
+        {SDL_TEXTINPUT, l_poti_callback_textinput},
+        {SDL_TEXTEDITING, l_poti_callback_textediting},
+        {-1, NULL}
+    };
+
+    i32 i;
+    for (i = 0; fn[i].type != -1; i++) {
+        lua_pushinteger(L, fn[i].type);
+        lua_pushcfunction(L, fn[i].fn);
+        lua_settable(L, -3);
+    }
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &lr_callbacks);
+
+    luaL_Reg reg[] = {
+        {NULL, NULL}
+    };
+
+    luaL_newlib(L, reg);
+
+
+    return 1;
+}
+
 /*=================================*
  *           Filesystem            *
  *=================================*/
@@ -1101,13 +970,25 @@ static int l_poti_filesystem_base_path(lua_State *L) {
 }
 
 static int l_poti_filesystem_pref_path(lua_State *L) {
+
     return 0;
+}
+
+static int l_poti_filesystem_read(lua_State *L) {
+    const char *filename = luaL_checkstring(L, 1);
+    char *content = poti()->read_file(filename, NULL);
+
+    lua_pushstring(L, content);
+    free(content);
+
+    return 1;
 }
 
 static int luaopen_filesystem(lua_State *L) {
     luaL_Reg reg[] = {
         {"base_path", l_poti_filesystem_base_path},
         {"pref_path", l_poti_filesystem_pref_path},
+        {"read", l_poti_filesystem_read},
         {NULL, NULL}
     };
     luaL_newlib(L, reg);
@@ -1315,7 +1196,7 @@ static int l_register_audio_meta(lua_State *L) {
  * Texture
  *********************************/
 
-static int _textype_from_string(lua_State *L, const char *name) {
+static int s_textype_from_string(lua_State *L, const char *name) {
     int usage = SDL_TEXTUREACCESS_STATIC;
     if (!strcmp(name, "static")) usage = SDL_TEXTUREACCESS_STATIC;
     else if (!strcmp(name, "stream")) usage = SDL_TEXTUREACCESS_STREAMING;
@@ -1328,30 +1209,36 @@ static int _textype_from_string(lua_State *L, const char *name) {
     return usage;
 }
 
-static int _texture_from_path(lua_State *L, Texture **tex) {
+static int s_init_texture(Texture *tex, int target, int w, int h, int format, void *data) {
+    glGenTextures(1, &tex->handle);
+    glBindTexture(GL_TEXTURE_2D, tex->handle);
+
+    tex->width = w;
+    tex->height = h;
+    tex->filter[0] = GL_NEAREST;
+    tex->filter[1] = GL_NEAREST;
+    tex->wrap[0] = GL_CLAMP_TO_BORDER;
+    tex->wrap[1] = GL_CLAMP_TO_BORDER;
+
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tex->filter[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, tex->filter[1]);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, tex->wrap[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, tex->wrap[1]);
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, GL_FALSE, format, GL_UNSIGNED_BYTE, data);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return 1;
+}
+
+static int s_texture_from_path(lua_State *L, Texture *tex) {
     size_t size;
-    // int top = lua_gettop(L)-1;
     const char *path = luaL_checklstring(L, 1, &size);
 
     int w, h, format, req_format;
     req_format = STBI_rgb_alpha;
-    // FILE *fp;
-    // fp = fopen(path, "rb");
-    // fseek(fp, 0, SEEK_END);
-    // int sz = ftell(fp);
-    // fseek(fp, 0, SEEK_SET);
-
-    // unsigned char img[sz];
-    // fread(img, 1, sz, fp);
-    // fclose(fp);
-
-    // sbtar_t *tar = &poti()->pkg;
-
-    // sbtar_find(tar, path);
-    // sbtar_header_t header;
-    // sbtar_header(tar, &header);
-    // char img[header.size];
-    // sbtar_data(tar, img, header.size);
 
     size_t fsize;
     u8 *img = (u8*)poti()->read_file(path, &fsize);
@@ -1373,23 +1260,16 @@ static int _texture_from_path(lua_State *L, Texture **tex) {
     }
 
     u8 *pixels = stbi_load_from_memory(img, fsize, &w, &h, &format, req_format);
-    int pixel_format = SDL_PIXELFORMAT_RGBA32;
+    int pixel_format = GL_RGB;
     switch (req_format) {
-        case STBI_rgb: pixel_format = SDL_PIXELFORMAT_RGB888; break;
-        case STBI_rgb_alpha: pixel_format = SDL_PIXELFORMAT_RGBA32; break;
+        case STBI_rgb: pixel_format = GL_RGB; break;
+        case STBI_rgb_alpha: pixel_format = GL_RGBA; break;
     }
-
-    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormatFrom(pixels, w, h, 1, w*req_format, pixel_format);
-
-    *tex = SDL_CreateTextureFromSurface(poti()->render, surf);
-    SDL_FreeSurface(surf);
+    s_init_texture(tex, 0, w, h, pixel_format, pixels);
     stbi_image_free(pixels);
     free(img);
-    // *tex = tea_texture_load(path, usage);
-    if (!*tex) {
-        lua_pushstring(L, "Failed to create SDL texture: ");
-        lua_pushstring(L, SDL_GetError());
-        lua_concat(L, 2);
+    if (!tex->handle) {
+        lua_pushstring(L, "Failed to create GL texture");
         lua_error(L);
         return 1;
     }
@@ -1397,7 +1277,7 @@ static int _texture_from_path(lua_State *L, Texture **tex) {
     return 1;
 }
 
-static int _texture_from_size(lua_State *L, Texture **tex) {
+static int s_texture_from_size(lua_State *L, Texture *tex) {
     int top = lua_gettop(L)-1;
     float w, h;
     w = luaL_checknumber(L, 1);
@@ -1407,10 +1287,11 @@ static int _texture_from_size(lua_State *L, Texture **tex) {
     if (top > 1 && lua_type(L, top) == LUA_TSTRING)
         s_usage = luaL_checkstring(L, top);
 
-    int usage = _textype_from_string(L, s_usage);
+    int usage = s_textype_from_string(L, s_usage);
+    s_init_texture(tex, 0, w, h, GL_RGBA, NULL);
     // *tex = tea_texture(NULL, w, h, TEA_RGBA, usage);
-    *tex = SDL_CreateTexture(poti()->render, SDL_PIXELFORMAT_RGBA32, usage, w, h);
-    if (!*tex) {
+    // *tex = SDL_CreateTexture(poti()->render, SDL_PIXELFORMAT_RGBA32, usage, w, h);
+    if (!tex->handle) {
         fprintf(stderr, "Failed to load texture: %s\n", SDL_GetError());
         exit(0);
     }
@@ -1419,12 +1300,12 @@ static int _texture_from_size(lua_State *L, Texture **tex) {
 }
 
 int l_poti_new_texture(lua_State *L) {
-    Texture **tex = lua_newuserdata(L, sizeof(*tex));
+    Texture *tex = lua_newuserdata(L, sizeof(*tex));
     luaL_setmetatable(L, TEXTURE_CLASS);
 
     switch(lua_type(L, 1)) {
-        case LUA_TSTRING: _texture_from_path(L, tex); break;
-        case LUA_TNUMBER: _texture_from_size(L, tex); break;
+        case LUA_TSTRING: s_texture_from_path(L, tex); break;
+        case LUA_TNUMBER: s_texture_from_size(L, tex); break;
     }
     
     return 1;
@@ -1447,18 +1328,33 @@ static int get_flip_from_table(lua_State *L, int index, int *flip) {
 
 
 static int l_poti_texture__draw(lua_State *L) {
-    Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    Texture *tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
     int index = 2;
-    // int offset = 0;
-    // int top = lua_gettop(L);
-    // if (top < 2) tea_texture_draw(*tex, NULL, NULL);
     int w, h;
-    SDL_QueryTexture(*tex, NULL, NULL, &w, &h);
+    w = tex->width;
+    h = tex->height;
 
     SDL_Rect s = {0, 0, w, h};
     s_get_rect_from_table(L, index++, &s);
-    SDL_Rect d = { 0, 0, s.w, s.h };
+    s.x /= w;
+    s.y /= h;
+    s.w /= w;
+    s.h /= h;
+
+    SDL_Rect d = { 0, 0, s.w*w, s.h*h };
     s_get_rect_from_table(L, index++, &d);
+
+    float *c = RENDER()->color;
+
+    float vertices[] = {
+        d.x, d.y, c[0], c[1], c[2], c[3], s.x, s.y,
+        d.x + d.w, d.y, c[0], c[1], c[2], c[3], s.x + s.w, s.y,
+        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], s.x + s.w, s.y + s.h,
+
+        d.x, d.y, c[0], c[1], c[2], c[3], s.x, s.y,
+        d.x, d.y + d.h, c[0], c[1], c[2], c[3], s.x, s.y + s.h,
+        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], s.x + s.w, s.y + s.h,
+    };
 
     if (index > 3) {
         float angle = luaL_optnumber(L, index++, 0);
@@ -1469,48 +1365,41 @@ static int l_poti_texture__draw(lua_State *L) {
         int flip = SDL_FLIP_NONE;
         get_flip_from_table(L, index++, &flip);
 
-        SDL_RenderCopyEx(poti()->render, *tex, &s, &d, angle, &origin, flip);
+
+        // SDL_RenderCopyEx(poti()->render, *tex, &s, &d, angle, &origin, flip);
     } else {
-        SDL_RenderCopy(poti()->render, *tex, &s, &d);
+        // SDL_RenderCopy(poti()->render, *tex, &s, &d);
     }
+    glBindTexture(GL_TEXTURE_2D, tex->handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 48 * sizeof(float), vertices);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 
     return 0;
 }
 
 static int l_poti_texture__width(lua_State *L) {
-    Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
-
-    int width;
-    SDL_QueryTexture(*tex, NULL, NULL, &width, NULL);
-
-    lua_pushnumber(L, width);
+    Texture *tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    lua_pushnumber(L, tex->width);
     return 1;
 }
 
 static int l_poti_texture__height(lua_State *L) {
-    Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
-
-    int height;
-    SDL_QueryTexture(*tex, NULL, NULL, &height, NULL);
-
-    lua_pushnumber(L, height);
+    Texture *tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    lua_pushnumber(L, tex->height);
     return 1;
 }
 
 static int l_poti_texture__size(lua_State *L) {
-    Texture **tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
-
-    int width, height;
-    SDL_QueryTexture(*tex, NULL, NULL, &width, &height);
-
-    lua_pushnumber(L, width);
-    lua_pushnumber(L, height);
+    Texture *tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    lua_pushnumber(L, tex->width);
+    lua_pushnumber(L, tex->height);
     return 2;
 }
 
 static int l_poti_texture__gc(lua_State *L) {
-    Texture** tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
-    SDL_DestroyTexture(*tex);
+    Texture* tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
+    glDeleteTextures(1, &tex->handle);
+    // SDL_DestroyTexture(*tex);
     return 0;
 }
 
@@ -1581,7 +1470,7 @@ static int l_poti_font__print(lua_State *L) {
         dest.y = y + pos.y;
         dest.w = src.w;
         dest.h = src.h;
-        SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
+        // SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
     }
 
     return 0;
@@ -1648,9 +1537,9 @@ static int l_poti_font__height(lua_State* L) {
 }
 
 static int l_poti_font__gc(lua_State *L) {
-    Font** font = luaL_checkudata(L, 1, FONT_CLASS);
-    SDL_DestroyTexture((*font)->tex);
-    free((*font)->data);
+    Font* font = luaL_checkudata(L, 1, FONT_CLASS);
+    // SDL_DestroyTexture((*font)->tex);
+    free(font->data);
     // tea_destroy_font(*font);
     return 0;
 }
@@ -1675,144 +1564,305 @@ static int l_register_font_meta(lua_State* L) {
 }
 
 /*********************************
- * Draw
+ * Shader
  *********************************/
 
-int l_poti_render_clear(lua_State *L) {
-    color_t color = {0, 0, 0, 255};
-    int args = lua_gettop(L);
+int s_compile_shader(const char *source, int type) {
+    u32 shader = glCreateShader(type);
+    const i8 *type_str = (i8*)(type == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT");
+    char shader_define[128];
+    sprintf(shader_define, "#version 130\n#define %s_SHADER\n", type_str);
 
-    for (int i = 0; i < args; i++) {
-        color[i] = lua_tonumber(L, i+1);
+    GLchar const *files[] = {shader_define, source};
+    GLint lengths[] = {strlen(shader_define), strlen(source)};
+
+    glShaderSource(shader, 2, files, lengths);
+
+    glCompileShader(shader);
+    int success;
+    char info_log[512];
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(shader, 512, NULL, info_log);
+        fprintf(stderr, "failed to compile %s shader: %s\n", type_str, info_log);
     }
-    SDL_SetRenderDrawColor(poti()->render, color[0], color[1], color[2], color[3]);
-    SDL_RenderClear(poti()->render);
-    SDL_SetRenderDrawColor(poti()->render, poti()->color[0], poti()->color[1], poti()->color[2], poti()->color[3]);
+
+    return shader;
+}
+
+int s_load_program(int vertex, int fragment) {
+    int success;
+    char info_log[512];
+
+    unsigned int program = glCreateProgram();
+    glAttachShader(program, vertex);
+    glAttachShader(program, fragment);
+    glLinkProgram(program);
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+
+    if (!success) {
+        glGetProgramInfoLog(program, 512, NULL, info_log);
+        fprintf(stderr, "failed to link program: %s\n", info_log);
+    }
+
+    return program;
+}
+
+
+static int l_poti_new_shader(lua_State *L) {
+    Shader *shader = lua_newuserdata(L, sizeof(*shader));
+    luaL_setmetatable(L, SHADER_CLASS);
+
+    const char *vert_source = luaL_checkstring(L, 1);
+    const char *frag_source = luaL_checkstring(L, 2);
+
+    int vert, frag;
+
+    vert = s_compile_shader(vert_source, GL_VERTEX_SHADER);
+    frag = s_compile_shader(frag_source, GL_FRAGMENT_SHADER);
+
+    shader->handle = s_load_program(vert, frag);
+    shader->u_world = glGetUniformLocation(shader->handle, "u_World");
+    shader->u_modelview = glGetUniformLocation(shader->handle, "u_Modelview");
+
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+
+    return 1;
+}
+
+static int l_poti_shader__set(lua_State *L) {
+    Shader *s = luaL_checkudata(L, 1, SHADER_CLASS);
+    glUseProgram(s->handle);
+    mat4x4 world, modelview;
+    mat4x4_identity(world);
+    mat4x4_identity(modelview);
+    GLint view[4];
+    glGetIntegerv(GL_VIEWPORT, view);
+    mat4x4_ortho(world, 0, view[2], view[3], 0, 0, 1);
+
+    glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *world);
+    glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, *modelview);
+
     return 0;
 }
 
-int l_poti_render_mode(lua_State *L) {
+static int l_poti_shader__unset(lua_State *L) {
+    glUseProgram(0);
+    return 0;
+}
+
+static int l_poti_shader__gc(lua_State *L) {
+    Shader *s = luaL_checkudata(L, 1, SHADER_CLASS);
+    glDeleteProgram(s->handle);
+    return 0;
+}
+
+static int l_register_shader_meta(lua_State *L) {
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_meta);
+    luaL_Reg reg[] = {
+        {"set", l_poti_shader__set},
+        {"unset", l_poti_shader__unset},
+        {"__gc", l_poti_shader__gc},
+        {NULL, NULL}
+    };
+
+    luaL_newmetatable(L, SHADER_CLASS);
+    luaL_setfuncs(L, reg, 0);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "__index");
+    lua_setfield(L, -2, SHADER_CLASS);
+    lua_pop(L, 1);
+    return 0;
+}
+
+/*********************************
+ * Draw
+ *********************************/
+
+static int l_poti_render_clear(lua_State *L) {
+    float color[4] = {0.f, 0.f, 0.f, 1.f};
+    int args = lua_gettop(L);
+
+    for (int i = 0; i < args; i++) {
+        color[i] = lua_tonumber(L, i+1) / 255.f;
+    }
+    glClearColor(color[0], color[1], color[2], color[3]);
+    glClear(GL_COLOR_BUFFER_BIT);
+    return 0;
+}
+
+static int l_poti_render_mode(lua_State *L) {
     const char *mode_str = luaL_checkstring(L, 1);
     int mode = 0;
     if (!strcmp(mode_str, "line")) mode = 0;
     else if (!strcmp(mode_str, "fill")) mode = 1;
-    poti()->draw_mode = mode;
+    RENDER()->draw_mode = mode;
     return 0;
 }
 
-int l_poti_render_color(lua_State *L) {
+static int l_poti_render_color(lua_State *L) {
     int args = lua_gettop(L);
 
-    color_t col = {0, 0, 0, 255};
     for (int i = 0; i < args; i++) { 
-        col[i] = luaL_checknumber(L, i+1);
+        RENDER()->color[i] = luaL_checknumber(L, i+1) / 255.f;
     }
-    SDL_SetRenderDrawColor(poti()->render, col[0], col[1], col[2], col[3]);
-    memcpy(&poti()->color, &col, sizeof(color_t));
 
     return 0;
 }
 
-int l_poti_render_target(lua_State *L) {
-    Texture **tex = luaL_testudata(L, 1, TEXTURE_CLASS);
-    Texture *t = NULL;
-    if (tex) t = *tex;
-
-    SDL_SetRenderTarget(poti()->render, t);
+static int l_poti_render_target(lua_State *L) {
+    Texture *tex = luaL_testudata(L, 1, TEXTURE_CLASS);
+    int fbo = 0;
+    if (tex) fbo = tex->fbo;
+    RENDER()->target = tex;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     return 0;
 }
 
-int l_poti_render_point(lua_State *L) {
+static int l_poti_render_point(lua_State *L) {
     float x, y;
     x = luaL_checknumber(L, 1);
     y = luaL_checknumber(L, 2);
+    float *c = RENDER()->color;
 
-    SDL_RenderDrawPointF(poti()->render, x, y);
+    float vertices[] = {
+        x, y, c[0], c[1], c[2], c[3], 0.f, 0.f
+    };
+
+    Texture *tex = RENDER()->white;
+    glBindTexture(GL_TEXTURE_2D, tex->handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 8 * sizeof(float), vertices);
+    glDrawArrays(GL_POINTS, 0, 1);
     return 0;
 }
 
-int l_poti_render_line(lua_State *L) {
+static int l_poti_render_line(lua_State *L) {
     float p[4];
 
     for (int i = 0; i < 4; i++) {
         p[i] = luaL_checknumber(L, i+1);
     }
+    float *c = RENDER()->color;
+    float vertices[] = {
+        p[0], p[1], c[0], c[1], c[2], c[3], 0.f, 0.f,
+        p[2], p[3], c[0], c[1], c[2], c[3], 1.f, 1.f
+    };
 
-    SDL_RenderDrawLineF(poti()->render, p[0], p[1], p[2], p[3]);
+    Texture *tex = RENDER()->white;
+    glBindTexture(GL_TEXTURE_2D, tex->handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 16 * sizeof(float), vertices);
+    glDrawArrays(GL_LINES, 0, 1);
     return 0;
 }
 
 typedef void(*DrawCircle)(float, float, float, int);
 
-static void circle_fill_segment(int xc, int yc, int x, int y) {
-    SDL_RenderDrawLine(poti()->render, xc + x, yc + y, xc - x, yc + y);
-    SDL_RenderDrawLine(poti()->render, xc + x, yc - y, xc - x, yc - y);
-    SDL_RenderDrawLine(poti()->render, xc + y, yc + x, xc - y, yc + x);
-    SDL_RenderDrawLine(poti()->render, xc + y, yc - x, xc - y, yc - x);
-}
-
-static void circle_line_segment(int xc, int yc, int x, int y) {
-    SDL_RenderDrawPoint(poti()->render, xc + x, yc + y);
-    SDL_RenderDrawPoint(poti()->render, xc - x, yc + y);
-
-    SDL_RenderDrawPoint(poti()->render, xc + x, yc - y);
-    SDL_RenderDrawPoint(poti()->render, xc - x, yc - y);
-
-    SDL_RenderDrawPoint(poti()->render, xc + y, yc + x);
-    SDL_RenderDrawPoint(poti()->render, xc - y, yc + x);
-
-    SDL_RenderDrawPoint(poti()->render, xc + y, yc - x);
-    SDL_RenderDrawPoint(poti()->render, xc - y, yc - x);
-}
-
 static void draw_filled_circle(float xc, float yc, float radius, int segments) {
-    int x = 0, y = radius;
-    int d = 3 - 2 * radius;
-    circle_fill_segment(xc, yc, x, y);
 
-    while (y >= x) {
-        x++;
-        if (d > 0) {
-            y--;
-            d = d + 4 * (x - y) + 10;
-        } else
-            d = d + 4 * x + 6;
-        circle_fill_segment(xc, yc, x, y);
+    float sides = segments >= 4 ? segments : 4;
+    int bsize = (3*sides) * 8 * sizeof(float);
+    float vertices[bsize];
+    double pi2 = 2.0 * M_PI;
+
+    float *v = vertices;
+    for (int i = 0; i < sides; i++) {
+
+        v[0] = xc;
+        v[1] = yc;
+        v[2] = RENDER()->color[0];
+        v[3] = RENDER()->color[1];
+        v[4] = RENDER()->color[2];
+        v[5] = RENDER()->color[3];
+        v[6] = 0.f;
+        v[7] = 0.f;
+
+        v += 8;
+
+        float tetha = (i * pi2) / sides;
+
+        v[0] = xc + (cosf(tetha) * radius);
+        v[1] = yc + (sinf(tetha) * radius);
+        v[2] = RENDER()->color[0];
+        v[3] = RENDER()->color[1];
+        v[4] = RENDER()->color[2];
+        v[5] = RENDER()->color[3];
+        v[6] = 0.f;
+        v[7] = 0.f;
+        v += 8;
+
+        tetha = ((i+1) * pi2) / sides;
+
+        v[0] = xc + (cosf(tetha) * radius);
+        v[1] = yc + (sinf(tetha) * radius);
+        v[2] = RENDER()->color[0];
+        v[3] = RENDER()->color[1];
+        v[4] = RENDER()->color[2];
+        v[5] = RENDER()->color[3];
+        v[6] = 0.f;
+        v[7] = 0.f;
+        v += 8;
     }
+
+    glBufferSubData(GL_ARRAY_BUFFER, 0, bsize, vertices);
+    glDrawArrays(GL_TRIANGLES, 0, 3*sides);
 }
 
 static void draw_lined_circle(float xc, float yc, float radius, int segments) {
-    int x = 0, y = radius;
-    int d = 3 - (2 * radius);
-    circle_line_segment(xc, yc, x, y);
+    float sides = segments >= 4 ? segments : 4;
+    int bsize = (2*sides) * 8 * sizeof(float);
+    float vertices[bsize];
+    double pi2 = 2.0 * M_PI;
 
-    while (y >= x) {
-        x++;
-        if (d > 0) {
-            y--;
-            d = d + 4 * (x - y) + 10;
-        } else
-            d = d + 4 * x + 6;
-        circle_line_segment(xc, yc, x, y);
+    float *v = vertices;
+    for (int i = 0; i < sides; i++) {
+        float tetha = (i * pi2) / sides;
+
+        v[0] = xc + (cosf(tetha) * radius);
+        v[1] = yc + (sinf(tetha) * radius);
+        v[2] = RENDER()->color[0];
+        v[3] = RENDER()->color[1];
+        v[4] = RENDER()->color[2];
+        v[5] = RENDER()->color[3];
+        v[6] = 0.f;
+        v[7] = 0.f;
+
+        v += 8;
+
+        tetha = ((i+1) * pi2) / sides;
+
+        v[0] = xc + (cosf(tetha) * radius);
+        v[1] = yc + (sinf(tetha) * radius);
+        v[2] = RENDER()->color[0];
+        v[3] = RENDER()->color[1];
+        v[4] = RENDER()->color[2];
+        v[5] = RENDER()->color[3];
+        v[6] = 0.f;
+        v[7] = 0.f;
+        v += 8;
     }
+
+    glBufferSubData(GL_ARRAY_BUFFER, 0, bsize, vertices);
+    glDrawArrays(GL_LINES, 0, sides*2);
 }
 
-int l_poti_render_circle(lua_State *L) {
+static int l_poti_render_circle(lua_State *L) {
 
     float x, y;
     x = luaL_checknumber(L, 1);
     y = luaL_checknumber(L, 2);
 
     float radius = luaL_checknumber(L, 3);
-
-    float segments = luaL_optnumber(L, 4, 32);
+    float segments = luaL_optnumber(L, 4, 16);
 
     DrawCircle fn[2] = {
         draw_lined_circle,
         draw_filled_circle
     };
 
-    fn[(int)poti()->draw_mode](x, y, radius, segments);
+    Texture *tex = RENDER()->white;
+    glBindTexture(GL_TEXTURE_2D, tex->handle);
+    fn[(int)RENDER()->draw_mode](x, y, radius, segments);
 
     return 0;
 }
@@ -1820,14 +1870,42 @@ int l_poti_render_circle(lua_State *L) {
 typedef void(*DrawRect)(SDL_Rect*);
 
 static void draw_filled_rect(SDL_Rect *r) {
-    SDL_RenderFillRect(poti()->render, r);
+    float *c = RENDER()->color;
+    float vertices[] = {
+        r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
+        r->x + r->w, r->y, c[0], c[1], c[2], c[3], 1.f, 0.f,
+        r->x + r->w, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
+        
+        r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
+        r->x, r->y + r->h, c[0], c[1], c[2], c[3], 0.f, 1.f,
+        r->x + r->w, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
+    };
+
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 48 * sizeof(float), vertices);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
 static void draw_lined_rect(SDL_Rect *r) {
-    SDL_RenderDrawRect(poti()->render, r);
+    float *c = RENDER()->color;
+    float vertices[] = {
+        r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
+        r->x + r->w, r->y, c[0], c[1], c[2], c[3], 1.f, 0.f,
+
+        r->x + r->w, r->y, c[0], c[1], c[2], c[3], 1.f, 0.f,
+        r->x + r->w, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
+
+        r->x + r->w, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
+        r->x, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
+        
+        r->x, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
+        r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
+    };
+
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 64 * sizeof(float), vertices);
+    glDrawArrays(GL_LINES, 0, 8);
 }
 
-int l_poti_render_rectangle(lua_State *L) {
+static int l_poti_render_rectangle(lua_State *L) {
 
     SDL_Rect r = {0, 0, 0, 0};
 
@@ -1841,79 +1919,44 @@ int l_poti_render_rectangle(lua_State *L) {
         draw_filled_rect
     };
 
-    fn[(int)poti()->draw_mode](&r);
+    Texture *tex = RENDER()->white;
+    glBindTexture(GL_TEXTURE_2D, tex->handle);
+    fn[(int)RENDER()->draw_mode](&r);
     
     return 0;
 }
 
 typedef void(*DrawTriangle)(float, float, float, float, float, float);
-
-static void bottom_flat_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
-    float invslope1 = (x1 - x0) / (y1 - y0);
-    float invslope2 = (x2 - x0) / (y2 - y0);
-
-    float curX1 = x0;
-    float curX2 = x0;
-
-    for (int scanlineY = y0; scanlineY <= y1; scanlineY++) {
-        SDL_RenderDrawLineF(poti()->render, curX1, scanlineY, curX2, scanlineY);
-        curX1 += invslope1;
-        curX2 += invslope2;
-    } 
-}
-
-static void top_flat_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
-    float invslope1 = (x2 - x0) / (y2 - y0);
-    float invslope2 = (x2 - x1) / (y2 - y1);
-
-    float curX1 = x2;
-    float curX2 = x2;
-
-    for (int scanlineY = y2; scanlineY > y0; scanlineY--) {
-        SDL_RenderDrawLineF(poti()->render, curX1, scanlineY, curX2, scanlineY);
-        curX1 -= invslope1;
-        curX2 -= invslope2;
-    }
-}
-
-static void swap_pos(float *x0, float *y0, float *x1, float *y1) {
-    float aux_x, aux_y;
-    aux_x = *x0;
-    aux_y = *y0;
-    *x0 = *x1;
-    *y0 = *y1;
-    *x1 = aux_x;
-    *y1 = aux_y;
-}
-
 static void draw_filled_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
-    if (y1 < y0)
-        swap_pos(&x1, &y1, &x0, &y0);
-    if (y2 < y0)
-        swap_pos(&x2, &y2, &x0, &y0);
-    if (y2 < y1)
-        swap_pos(&x2, &y2, &x1, &y1);
+    float *c = RENDER()->color;
+    float vertices[] = {
+        x0, y0, c[0], c[1], c[2], c[3], 0.5f, 0.f,
+        x1, y1, c[0], c[1], c[2], c[3], 0.f, 1.f,
+        x2, y2, c[0], c[1], c[2], c[3], 1.f, 1.f
+    };
 
-    if (y1 == y2)
-        bottom_flat_triangle(x0, y0, x1, y1, x2, y2);
-    else if (y0 == y1)
-        top_flat_triangle(x0, y0, x1, y1, x2, y2);
-    else {
-        float x3, y3;
-        x3 = x0 + ((y1 - y0) / (y2 - y0)) * (x2 - x0);
-        y3 = y1;
-        bottom_flat_triangle(x0, y0, x1, y1, x3, y3);
-        top_flat_triangle(x1, y1, x3, y3, x2, y2);
-    }
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 24 * sizeof(float), vertices);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
 static void draw_lined_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
-    SDL_RenderDrawLine(poti()->render, x0, y0, x1, y1);
-    SDL_RenderDrawLine(poti()->render, x1, y1, x2, y2);
-    SDL_RenderDrawLine(poti()->render, x2, y2, x0, y0);
+    float *c = RENDER()->color;
+    float vertices[] = {
+        x0, y0, c[0], c[1], c[2], c[3], 0.5f, 0.f,
+        x1, y1, c[0], c[1], c[2], c[3], 0.f, 1.f,
+
+        x1, y1, c[0], c[1], c[2], c[3], 0.f, 1.f,
+        x2, y2, c[0], c[1], c[2], c[3], 1.f, 1.f,
+        
+        x2, y2, c[0], c[1], c[2], c[3], 1.f, 1.f,
+        x0, y0, c[0], c[1], c[2], c[3], 0.5f, 0.f
+    };
+
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 48 * sizeof(float), vertices);
+    glDrawArrays(GL_LINES, 0, 6);
 }
 
-int l_poti_render_triangle(lua_State *L) {
+static int l_poti_render_triangle(lua_State *L) {
 
     float points[6];
 
@@ -1926,7 +1969,9 @@ int l_poti_render_triangle(lua_State *L) {
         draw_filled_triangle
     };
 
-    fn[(int)poti()->draw_mode](points[0], points[1], points[2], points[3], points[4], points[5]);
+    Texture *tex = RENDER()->white;
+    glBindTexture(GL_TEXTURE_2D, tex->handle);
+    fn[(int)RENDER()->draw_mode](points[0], points[1], points[2], points[3], points[4], points[5]);
 
     return 0;
 }
@@ -1965,7 +2010,7 @@ void s_char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SD
     if (rect) *rect = (SDL_Rect){s0, t0, s1, t1};
 }
 
-int l_poti_render_print(lua_State *L) {
+static int l_poti_render_print(lua_State *L) {
     int index = 1;
     Font *font = luaL_testudata(L, index++, FONT_CLASS);
     if (!font) {
@@ -1996,7 +2041,7 @@ static struct {
 static int l_poti_render_blend_mode(lua_State *L) {
     int i;
     SDL_BlendMode mode;
-    SDL_GetRenderDrawBlendMode(poti()->render, &mode);
+    // SDL_GetRenderDrawBlendMode(poti()->render, &mode);
     const char *mode_str = luaL_checkstring(L, 1);
     for (i = 0; i < 4; i++) {
         if (!strcmp(mode_str, blend_modes[i].name)) {
@@ -2008,9 +2053,21 @@ static int l_poti_render_blend_mode(lua_State *L) {
     return 0;
 }
 
+typedef struct {
+    float x, y, w, h;
+} Rectf;
+
 void s_font_print(Font* font, float x, float y, const char* text) {
     u8* p = (u8*)text;
     float x0 = 0, y0 = 0;
+    int count = strlen(text) * 6;
+    float w, h;
+    float *c = RENDER()->color;
+    w = font->tex->width;
+    h = font->tex->height;
+    #if 1
+    float vertices[count*8];
+    float *v = vertices;
     while (*p) {
         int codepoint;
         p = poti()->utf8_codepoint(p, &codepoint);
@@ -2021,8 +2078,44 @@ void s_font_print(Font* font, float x, float y, const char* text) {
         dest.y = y + pos.y;
         dest.w = src.w;
         dest.h = src.h;
-        SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
+
+        Rectf t;
+        t.x = src.x / w;
+        t.y = src.y / h;
+        t.w = src.w / w;
+        t.h = src.h / h;
+        float letter[] = {
+            dest.x, dest.y, c[0], c[1], c[2], c[3], t.x, t.y,
+            dest.x + dest.w, dest.y, c[0], c[1], c[2], c[3], t.x + t.w, t.y,
+            dest.x + dest.w, dest.y + dest.h, c[0], c[1], c[2], c[3], t.x + t.w, t.y + t.h,
+
+            dest.x, dest.y, c[0], c[1], c[2], c[3], t.x, t.y,
+            dest.x, dest.y + dest.h, c[0], c[1], c[2], c[3], t.x, t.y + t.h,
+            dest.x + dest.w, dest.y + dest.h, c[0], c[1], c[2], c[3], t.x + t.w, t.y + t.h,
+        };
+        memcpy(v, letter, 48*sizeof(float));
+        v += 48;
+        // SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
     }
+
+    glBindTexture(GL_TEXTURE_2D, font->tex->handle);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, count * 8 * sizeof(float), vertices);
+    glDrawArrays(GL_TRIANGLES, 0, count);
+    #else
+    glBindTexture(GL_TEXTURE_2D, font->tex->handle);
+    float vertices[] = {
+        x, y, c[0], c[1], c[2], c[3], 0, 0,
+        x+w, y, c[0], c[1], c[2], c[3], 1, 0,
+        x+w, y+h, c[0], c[1], c[2], c[3], 1, 1,
+      
+        x, y, c[0], c[1], c[2], c[3], 0, 0,
+        x, y+h, c[0], c[1], c[2], c[3], 0, 1,
+        x+w, y+h, c[0], c[1], c[2], c[3], 1, 1,
+    };
+
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 48*sizeof(float), vertices);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    #endif
 }
 
 i32 s_get_text_width(Font *font, const i8* text, i32 len) {
@@ -2045,7 +2138,12 @@ i32 s_get_text_height(Font *font) {
     return font->height;
 }
 
-int luaopen_render(lua_State* L) {
+static int l_poti_render_default_shader(lua_State *L) {
+    lua_rawgetp(L, LUA_REGISTRYINDEX, RENDER()->def_shader);
+    return 1;
+}
+
+static int luaopen_render(lua_State* L) {
     luaL_Reg reg[] = {
         {"mode", l_poti_render_mode},
         {"clear", l_poti_render_clear},
@@ -2058,6 +2156,7 @@ int luaopen_render(lua_State* L) {
         {"triangle", l_poti_render_triangle},
         {"print", l_poti_render_print},
         {"blend_mode", l_poti_render_blend_mode},
+        {"default_shader", l_poti_render_default_shader},
         {NULL, NULL}
     };
 
@@ -2102,7 +2201,7 @@ static int l_poti_keyboard_is_screen_shown(lua_State *L) {
     return 1;
 }
 
-int luaopen_keyboard(lua_State *L) {
+static int luaopen_keyboard(lua_State *L) {
     luaL_Reg reg[] = {
         {"down", l_poti_keyboard_down},
         {"up", l_poti_keyboard_up},
@@ -2148,7 +2247,7 @@ static int l_poti_mouse_up(lua_State *L) {
     return 1;
 }
 
-int luaopen_mouse(lua_State *L) {
+static int luaopen_mouse(lua_State *L) {
     luaL_Reg reg[] = {
         {"pos", l_poti_mouse_pos},
         {"down", l_poti_mouse_down},
@@ -2316,7 +2415,7 @@ static int l_poti_joystick__gc(lua_State* L) {
     return 0;
 }
 
-int luaopen_joystick(lua_State *L) {
+static int luaopen_joystick(lua_State *L) {
     luaL_Reg reg[] = {
         {"open", l_poti_joystick},
         {"num", l_poti_num_joysticks},
@@ -2483,17 +2582,17 @@ int luaopen_gamepad(lua_State *L) {
  *               GUI               *
  *=================================*/
 
-int l_poti_gui_begin(lua_State* L) {
+static int l_poti_gui_begin(lua_State* L) {
     mu_begin(&poti()->ui);
     return 0;
 }
 
-int l_poti_gui_end(lua_State* L) {
+static int l_poti_gui_end(lua_State* L) {
     mu_end(&poti()->ui);
     return 0;
 }
 
-int l_poti_gui_begin_window(lua_State* L) {
+static int l_poti_gui_begin_window(lua_State* L) {
     const char* title = luaL_checkstring(L, 1);
     SDL_Rect r;
     s_get_rect_from_table(L, 2, &r);
@@ -2501,20 +2600,20 @@ int l_poti_gui_begin_window(lua_State* L) {
     return 1;
 }
 
-int l_poti_gui_end_window(lua_State* L) {
-    mu_end_window(&poti()->ui);
+static int l_poti_gui_end_window(lua_State* L) {
+    // mu_end_window(&poti()->ui);
     return 0;
 }
 
 static int l_poti_gui_label(lua_State* L) {
     const char* text = luaL_checkstring(L, 1);
-    mu_label(&poti()->ui, text);
+    // mu_label(&poti()->ui, text);
     return 0;
 }
 
 static int l_poti_gui_button(lua_State* L) {
     const char* label = luaL_checkstring(L, 1);
-    lua_pushboolean(L, mu_button(&poti()->ui, label));
+    // lua_pushboolean(L, mu_button(&poti()->ui, label));
     return 1;
 }
 
@@ -2738,10 +2837,14 @@ static int luaopen_window(lua_State *L) {
     return 1;
 }
 
+/*=================================*
+ *              Poti               *
+ *=================================*/
+
 int luaopen_poti(lua_State* L) {
     luaL_Reg reg[] = {
         {"ver", l_poti_ver},
-        {"delta", l_poti_delta},
+        {"meta", l_poti_meta},
         {"start_textinput", l_poti_start_textinput},
         {"stop_textinput", l_poti_stop_textinput},
         {"textinput_rect", l_poti_textinput_rect},
@@ -2750,6 +2853,7 @@ int luaopen_poti(lua_State* L) {
         /* Types */
         {"Texture", l_poti_new_texture},
         {"Font", l_poti_new_font},
+        {"Shader", l_poti_new_shader},
         {"Audio", l_poti_new_audio},
         /* GUI */
         {"gui_begin", l_poti_gui_begin},
@@ -2768,6 +2872,7 @@ int luaopen_poti(lua_State* L) {
         {"keyboard", luaopen_keyboard},
         {"event", luaopen_event},
         {"render", luaopen_render},
+        {"timer", luaopen_timer},
         {"gui", luaopen_gui},
         {"window", luaopen_window},
         {NULL, NULL}
@@ -2783,10 +2888,282 @@ int luaopen_poti(lua_State* L) {
 
     l_register_texture_meta(L);
     l_register_font_meta(L);
+    l_register_shader_meta(L);
     l_register_audio_meta(L);
 
     return 1;
 }
+
+static int poti_init(int argc, char **argv) {
+    if (argc > 1) strcpy(poti()->basepath, argv[1]);
+    else strcpy(poti()->basepath, ".");
+
+    if (sbtar_open(&poti()->pkg, "game.pkg"))
+        poti()->is_packed = 1;
+    s_setup_function_ptrs(poti());
+
+    poti()->L = luaL_newstate();
+    lua_State *L = poti()->L;
+
+    /* init table for store types metatables */
+    lua_newtable(L);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &lr_meta);
+
+    /* init table to store audio data */
+    lua_newtable(L);
+    lua_newtable(L);
+    lua_rawseti(L, -2, AUDIO_STREAM);
+    lua_newtable(L);
+    lua_rawseti(L, -2, AUDIO_STATIC);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &lr_audio_data);
+
+    luaL_openlibs(L);
+    luaL_requiref(L, "poti", luaopen_poti, 1);
+
+    char title[100];
+    sprintf(title, "poti %s", POTI_VER);
+
+    mu_init(&poti()->ui);
+    poti()->ui.text_height = s_get_text_height;
+    poti()->ui.text_width = s_get_text_width;
+    poti()->ui.style->font = &poti()->default_font;
+
+#ifdef __EMSCRIPTEN__
+    u32 flags = SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER |
+    SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_SENSOR | SDL_INIT_AUDIO;
+#else
+    u32 flags = SDL_INIT_EVERYTHING;
+#endif
+    if (SDL_Init(flags)) {
+        fprintf(stderr, "Failed to init SDL2: %s\n", SDL_GetError());
+        exit(0);
+    }
+
+    SDL_Window *window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
+    if (!window) {
+        fprintf(stderr, "Failed to create SDL2 window: %s\n", SDL_GetError());
+        exit(0);
+    }
+    //SDL_Renderer *render = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    poti()->gl_context = SDL_GL_CreateContext(window);
+    SDL_GL_MakeCurrent(window, poti()->gl_context);
+    poti()->keys = SDL_GetKeyboardState(NULL);
+    poti()->window = window;
+
+    if (gl3wInit()) {
+        fprintf(stderr, "failed to initialize OpenGL\n");
+        exit(0);
+    }
+
+    glGenBuffers(1, &RENDER()->buffer.handle);
+    glGenVertexArrays(1, &RENDER()->vao);
+
+    glBindVertexArray(RENDER()->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, RENDER()->buffer.handle);
+    glBufferData(GL_ARRAY_BUFFER, 4096, NULL, GL_DYNAMIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glEnableVertexAttribArray(2);
+
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(sizeof(float) * 2));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(sizeof(float) * 6));
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    lua_pushcfunction(L, l_poti_new_shader);
+    lua_pushstring(L, vert_shader);
+    lua_pushstring(L, frag_shader);
+
+    lua_pcall(L, 2, 1, 0);
+    RENDER()->def_shader = lua_touserdata(L, -1);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, RENDER()->def_shader);
+
+    RENDER()->white = lua_newuserdata(L, sizeof(Texture));
+    luaL_setmetatable(L, TEXTURE_CLASS);
+
+    char pixels[] = {255, 255, 255, 255};
+    POTI()->init_texture(RENDER()->white, 0, 1, 1, GL_RGBA, (void*)pixels);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, RENDER()->white);
+
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_meta);
+    lua_getfield(L, -1, TEXTURE_CLASS);
+    lua_rawgetp(L, LUA_REGISTRYINDEX, RENDER()->white);
+    lua_setfield(L, -2, "white");
+    lua_pop(L, 2);
+
+    RENDER()->color[0] = RENDER()->color[1] =
+    RENDER()->color[2] = RENDER()->color[3] = 1.f;
+
+
+    poti()->init_font(&poti()->default_font, _font_ttf, _font_ttf_size, 8);
+
+    ma_context_config ctx_config = ma_context_config_init();
+    ma_result result = ma_context_init(NULL, 0, &ctx_config, &poti()->audio.ctx);
+    if (result != MA_SUCCESS) {
+        fprintf(stderr, "Failed to init audio context\n");
+        exit(0);
+    }
+
+    ma_device_config dev_config = ma_device_config_init(ma_device_type_playback);
+    dev_config.playback.pDeviceID = NULL;
+    dev_config.playback.format = AUDIO_DEVICE_FORMAT;
+    dev_config.playback.channels = AUDIO_DEVICE_CHANNELS;
+    dev_config.sampleRate = AUDIO_DEVICE_SAMPLE_RATE;
+    dev_config.pUserData = poti();
+    dev_config.dataCallback = s_audio_callback;
+
+    result = ma_device_init(&poti()->audio.ctx, &dev_config, &poti()->audio.device);
+    if (result != MA_SUCCESS) {
+        fprintf(stderr, "Failed to init audio device\n");
+        ma_context_uninit(&poti()->audio.ctx);
+        exit(0);
+    }
+
+    if (ma_device_start(&poti()->audio.device) != MA_SUCCESS) {
+        fprintf(stderr, "Failed to start audio device\n");
+        ma_context_uninit(&poti()->audio.ctx);
+        ma_device_uninit(&poti()->audio.device);
+        exit(0);
+    }
+
+    if (ma_mutex_init(&poti()->audio.ctx, &poti()->audio.lock) != MA_SUCCESS) {
+        fprintf(stderr, "Failed to start audio mutex\n");
+        ma_device_uninit(&poti()->audio.device);
+        ma_context_uninit(&poti()->audio.ctx);
+        exit(0);
+    }
+
+    i32 i;
+    for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        AudioBuffer *buffer = &poti()->audio.buffers[i];
+        memset(buffer, 0, sizeof(*buffer));
+        buffer->playing = 0;
+        buffer->volume = 1.f;
+        buffer->pitch = 1.f;
+        buffer->loaded = 0;
+        buffer->paused = 0;
+        buffer->loop = 0;
+    }
+
+    poti()->audio.is_ready = 1;
+
+
+    if (luaL_dostring(L, _err_func) != LUA_OK) {
+        const char *error_buf = lua_tostring(L, -1);
+        fprintf(stderr, "Failed to load poti lua error handler: %s\n", error_buf);
+        exit(0);
+    }
+    lua_rawsetp(L, LUA_REGISTRYINDEX, _err_func);
+
+    if (luaL_dostring(L, _initialize) != LUA_OK) {
+        const char *error_buf = lua_tostring(L, -1);
+        fprintf(stderr, "Failed to load poti lua initialize: %s\n", error_buf);
+        exit(0);
+    }
+    lua_pcall(L, 0, 1, 0);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &lr_step);
+
+    fprintf(stderr, "Is Packed: %d\n", poti()->is_packed);
+    return 1;
+}
+
+static int poti_step() {
+    lua_State *L = poti()->L;
+    SDL_Event *event = &poti()->event;
+    lua_rawgetp(poti()->L, LUA_REGISTRYINDEX, &lr_callbacks);
+    while (SDL_PollEvent(event)) {
+        lua_rawgeti(L, -1, event->type);
+        if (!lua_isnil(L, -1)) {
+            lua_pushlightuserdata(L, event);
+            lua_pcall(L, 1, 0, 0);
+        } else lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    double current_time = SDL_GetTicks();
+    poti()->delta = (current_time - poti()->last_time) / 1000.f;
+    poti()->last_time = current_time;
+
+    int ww, wh;
+    SDL_GetWindowSize(poti()->window, &ww, &wh);
+    glViewport(0, 0, ww, wh);
+
+    glClearColor(0.3f, 0.4f, 0.4f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    Shader *shader = RENDER()->def_shader;
+    glUseProgram(shader->handle);
+    mat4x4 world, modelview;
+    mat4x4_identity(world);
+    mat4x4_identity(modelview);
+    GLint view[4];
+    glGetIntegerv(GL_VIEWPORT, view);
+    mat4x4_ortho(world, 0, view[2], view[3], 0, 0, 1);
+
+    glUniformMatrix4fv(shader->u_world, 1, GL_FALSE, *world);
+    glUniformMatrix4fv(shader->u_modelview, 1, GL_FALSE, *modelview);
+
+    glBindVertexArray(RENDER()->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, RENDER()->buffer.handle);
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_step);
+    lua_pcall(L, 0, 0, 0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    mu_Command* cmd = NULL;
+    while (mu_next_command(&poti()->ui, &cmd)) {
+        switch (cmd->type) {
+        case MU_COMMAND_TEXT: s_font_print(&poti()->default_font, cmd->text.pos.x, cmd->text.pos.y, cmd->text.str); break;
+        case MU_COMMAND_RECT: {
+            // SDL_SetRenderDrawColor(poti()->render, cmd->rect.color.r, cmd->rect.color.g, cmd->rect.color.b, cmd->rect.color.a);
+            // SDL_Rect r = { cmd->rect.rect.x, cmd->rect.rect.y, cmd->rect.rect.w, cmd->rect.rect.h };
+            // SDL_RenderFillRect(poti()->render, &r);
+        }
+        break;
+        case MU_COMMAND_CLIP: {
+            SDL_Rect r = { cmd->clip.rect.x, cmd->clip.rect.y, cmd->clip.rect.w, cmd->clip.rect.h };
+            // SDL_RenderSetClipRect(poti()->render, &r);
+        }
+                            break;
+        }
+    }
+    // SDL_RenderSetClipRect(poti()->render, NULL);
+    // SDL_SetRenderDrawColor(poti()->render, 255, 255, 255, 255);
+
+    // SDL_RenderPresent(poti()->render);
+    SDL_GL_SwapWindow(poti()->window);
+    return 1;
+}
+
+static int poti_loop(void) {
+#if defined(__EMSCRIPTEN__)
+    emscripten_set_main_loop(poti_step, 0, 1);
+#else
+    while (!poti()->should_close) poti_step();
+#endif
+    return 1;
+}
+
+static int poti_quit(void) {
+    lua_close(poti()->L);
+    SDL_DestroyWindow(poti()->window);
+    // SDL_DestroyRenderer(poti()->render);
+    SDL_GL_DeleteContext(poti()->gl_context);
+    SDL_Quit();
+    // mo_deinit();
+    if (poti()->audio.is_ready) {
+        ma_mutex_uninit(&poti()->audio.lock);
+        ma_device_uninit(&poti()->audio.device);
+        ma_context_uninit(&poti()->audio.ctx);
+    } else
+        fprintf(stderr, "Audio Module could not be closed, not initialized\n");
+    return 1;
+}
+
 
 int main(int argc, char ** argv) {
     poti_init(argc, argv);
@@ -2912,7 +3289,7 @@ static i32 s_init_font(Font* font, const void* data, size_t buf_size, i32 font_s
         font->c[i].bt = font->baseline + y0;
 
         tw += w;
-        th = th > h ? th : h;
+        th = MAX(th, h);
     }
 
     font->height = th;
@@ -2922,7 +3299,6 @@ static i32 s_init_font(Font* font, const void* data, size_t buf_size, i32 font_s
     u32* bitmap = malloc(final_size * sizeof(u32));
     memset(bitmap, 0, final_size * sizeof(u32));
     int x = 0;
-    SDL_PixelFormat* fmt = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA32);
     for (int i = 0; i < 256; i++) {
         int ww = font->c[i].bw;
         int hh = font->c[i].bh;
@@ -2939,7 +3315,11 @@ static i32 s_init_font(Font* font, const void* data, size_t buf_size, i32 font_s
             if (j != 0 && j % ww == 0) {
                 yy += tw;
             }
-            bitmap[xx + yy] = SDL_MapRGBA(fmt, 255, 255, 255, bmp[j]);
+            u8 *b = (u8*)&bitmap[xx + yy];
+            b[0] = 255;
+            b[1] = 255;
+            b[2] = 255;
+            b[3] = bmp[j];
         }
         stbtt_FreeBitmap(bmp, font->info.userdata);
 
@@ -2947,10 +3327,11 @@ static i32 s_init_font(Font* font, const void* data, size_t buf_size, i32 font_s
 
         x += font->c[i].bw;
     }
-    SDL_FreeFormat(fmt);
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(bitmap, tw, th, 1, tw * 4, SDL_PIXELFORMAT_RGBA32);
-    SDL_Texture* tex = SDL_CreateTextureFromSurface(poti()->render, surf);
-    SDL_FreeSurface(surf);
+    // SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(bitmap, tw, th, 1, tw * 4, SDL_PIXELFORMAT_RGBA32);
+    // SDL_Texture* tex = SDL_CreateTextureFromSurface(poti()->render, surf);
+    Texture *tex = malloc(sizeof(Texture));
+    s_init_texture(tex, 0, tw, th, GL_RGBA, bitmap);
+    // SDL_FreeSurface(surf);
     free(bitmap);
     font->tex = tex;
     return 1;
@@ -2974,7 +3355,8 @@ int s_setup_function_ptrs(struct Context* ctx) {
     if (poti()->is_packed)
         ctx->read_file = s_read_file_packed;
     ctx->init_font = s_init_font;
-    ctx->load_font = s_load_font;
+    ctx->init_texture = s_init_texture;
+    // ctx->load_font = s_load_font;
     ctx->utf8_codepoint = s_utf8_codepoint;
 
     return 1;

@@ -1,16 +1,20 @@
 function poti.load()
     print("testandow")
+    tex = poti.Texture("bird.png")
+    x = 0
+    time = 0
+    shader = poti.render.default_shader()
+    print(shader)
+end
+
+function poti.update(dt)
+    time = time + dt
+    x = math.sin(time) * 32
 end
 
 function poti.draw()
+    poti.render.mode("fill")
     poti.render.clear()
     poti.render.color(255, 255, 255)
-    poti.render.rectangle(0, 0, 32, 32)
-end
-
-function poti.draw_gui()
-    if poti.gui.begin_window("boraveeee", {0, 0, 250, 150}) then
-        poti.gui.button("opa")
-        poti.gui.end_window()
-    end
+    poti.render.print("testanDO")
 end
