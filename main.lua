@@ -25,7 +25,6 @@ function poti.load()
     ]])
     print(shader)
     def = poti.render.default_shader()
-    white = poti.Texture.white()
 end
 
 function poti.update(dt)
@@ -36,10 +35,6 @@ end
 function poti.draw()
     poti.render.mode("fill")
     poti.render.color(255, 0, 0)
-    def:use()
-    white:bind()
-    poti.render.draw()
-    white:unbind()
     shader:set()
     poti.render.circle(64+x, 64, 12, 16)
     poti.render.color(255, 255, 255)
