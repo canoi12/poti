@@ -8,10 +8,10 @@
 #include <lauxlib.h>
 
 #if defined(__EMSCRIPTEN__)
-#include <emscripten.h>
+    #include <emscripten.h>
 #endif
 
-#include "GL/gl3w.h"
+#include "glad/glad.h"
 
 #ifdef _WIN32
     #define SDL_MAIN_HANDLED
@@ -51,9 +51,14 @@
 #define JOYSTICK_CLASS "Joystick"
 #define GAMEPAD_CLASS "GamePad"
 
+#define FILE_CLASS "File"
+
 #define poti() (&_ctx)
 #define POTI() (&_ctx)
-#define RENDER() (&poti()->render)
+#define RENDER() (&POTI()->render)
+#define TIMER() (&POTI()->timer)
+#define INPUT() (&POTI()->input)
+#define VERTEX() (RENDER()->vertex)
 
 #define M_PI 3.14159
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -89,6 +94,10 @@ typedef struct AudioBuffer AudioBuffer;
 typedef struct Texture Texture;
 typedef struct Font Font;
 typedef struct Shader Shader;
+
+typedef struct Vertex Vertex;
+
+typedef struct File File;
 
 typedef SDL_Window Window;
 typedef SDL_Renderer Render;
@@ -161,14 +170,29 @@ struct Shader {
     u32 u_world, u_modelview;
 };
 
+struct Vertex {
+    u32 vao;
+    u32 vbo;
+    u32 index, size;
+    void *data;
+};
+
+struct File {
+    FILE *fp;
+    u32 index;
+};
+
 struct Context {
     lua_State *L;
     Window *window;
     //Render *render;
     struct {
+        u32 draw_calls;
         i8 draw_mode;
         float color[4];
         Shader *def_shader;
+        Vertex def_vertex;
+        Texture def_target;
 
         Texture *tex;
         Texture *target;
@@ -176,11 +200,27 @@ struct Context {
         Texture *white;
         Shader *shader;
 
-        u32 vao;
-        struct {
-            u32 handle;
-            void *data;
-        } buffer;
+        Vertex *vertex;
+
+        void(*init_vertex)(Vertex*, u32);
+        void(*bind_vertex)(Vertex*);
+        void(*clear_vertex)(Vertex*);
+
+        void(*set_texture)(Texture*);
+        void(*set_shader)(Shader*);
+        void(*set_target)(Texture*);
+
+        void(*push_vertex)(Vertex*, f32, f32, f32, f32, f32, f32, f32, f32);
+        void(*push_vertices)(Vertex*, u32, f32*);
+#if 0
+        void(*push_point)(Vertex*, f32, f32);
+        void(*push_line)(Vertex*, f32, f32, f32, f32);
+        void(*push_triangle)(Vertex*, f32, f32, f32, f32, f32, f32);
+        void(*push_rectangle)(Vertex*, f32, f32, f32, f32);
+        void(*push_circle)(Vertex*, f32, f32, f32, u8);
+#endif
+
+        void(*draw_vertex)(Vertex*);
     } render;
     SDL_GLContext gl_context;
     Event event;
@@ -201,11 +241,11 @@ struct Context {
         f64 last;
         f64 delta;
         i32 fps, frames;
-    } time;
+    } timer;
 
-    f64 last_time;
-    f64 delta;
-    i32 fps, frames;
+    struct {
+        const Uint8 *keys;
+    } input;
 
     const Uint8 *keys;
     sbtar_t pkg;
@@ -216,7 +256,7 @@ struct Context {
     Font default_font;
     Font *font;
     i32(*init_font)(Font*, const void*, size_t, i32);
-    i32(*init_texture)(Texture*, i8, i32, i32, i32, void*);
+    i32(*init_texture)(Texture*, i32, i32, i32, i32, void*);
 
     u8*(*utf8_codepoint)(u8*, i32*);
 
@@ -288,6 +328,7 @@ static const i8 *_initialize =
 "main_state = xpcall(function() require 'main' end, _err)\n"
 "return _initialize";
 
+#if 0
 const char *vert_shader =
 "in vec2 in_Pos;\n"
 "in vec4 in_Color;\n"
@@ -310,7 +351,16 @@ const char *frag_shader =
 "void main() {\n"
 "  FragColor = v_Color * texture2D(u_Texture, v_Texcoord);\n"
 "}";
+#endif
+const char *vert_shader =
+"vec4 position(vec2 pos, mat4 world, mat4 modelview) {\n"
+"   return world * modelview * vec4(pos.x, pos.y, 0, 1);\n"
+"}";
 
+const char *frag_shader =
+"vec4 pixel(vec4 color, vec2 uv, sampler2D tex) {\n"
+"   return color * texture(tex, uv);\n"
+"}";
 
 static int s_get_rect_from_table(lua_State* L, int idx, SDL_Rect* out);
 static int s_get_point_from_table(lua_State* L, int idx, SDL_Point* out);
@@ -444,7 +494,7 @@ static int l_poti_meta(lua_State *L) {
  *=================================*/
 
 static int l_poti_timer_delta(lua_State *L) {
-    lua_pushnumber(L, poti()->delta);
+    lua_pushnumber(L, poti()->timer.delta);
     return 1;
 }
 
@@ -663,6 +713,19 @@ int l_poti_callback_gamepadremap(lua_State* L) {
     poti_call("gpad_remap", 2, 0);
     return 0;
 }
+
+
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+int l_poti_callback_gamepadtouchpad(lua_State* L) {
+    // SDL_Event *event = lua_touserdata(L, 1);
+    return 0;
+}
+
+int l_poti_callback_gamepadtouchpadmotion(lua_State* L) {
+
+        return 0;
+}
+#endif
 
 static int l_poti_callback_finger(lua_State* L) {
     SDL_Event *event = lua_touserdata(L, 1);
@@ -923,6 +986,11 @@ static int luaopen_event(lua_State *L) {
         {SDL_CONTROLLERDEVICEADDED, l_poti_callback_gamepaddevice},
         {SDL_CONTROLLERDEVICEREMOVED, l_poti_callback_gamepaddevice},
         {SDL_CONTROLLERDEVICEREMAPPED, l_poti_callback_gamepadremap},
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+        {SDL_CONTROLLERTOUCHPADDOWN, l_poti_callback_gamepadtouchpad},
+        {SDL_CONTROLLERTOUCHPADUP, l_poti_callback_gamepadtouchpad},
+        {SDL_CONTROLLERTOUCHPADMOTION, l_poti_callback_gamepadtouchpadmotion},
+#endif
         {SDL_FINGERDOWN, l_poti_callback_finger},
         {SDL_FINGERUP, l_poti_callback_finger},
         {SDL_FINGERMOTION, l_poti_callback_fingermotion},
@@ -984,11 +1052,16 @@ static int l_poti_filesystem_read(lua_State *L) {
     return 1;
 }
 
+static int l_poti_filesystem_write(lua_State *L) {
+    return 0;
+}
+
 static int luaopen_filesystem(lua_State *L) {
     luaL_Reg reg[] = {
         {"base_path", l_poti_filesystem_base_path},
         {"pref_path", l_poti_filesystem_pref_path},
         {"read", l_poti_filesystem_read},
+        {"write", l_poti_filesystem_write},
         {NULL, NULL}
     };
     luaL_newlib(L, reg);
@@ -1068,16 +1141,11 @@ static int l_poti_new_audio(lua_State *L) {
     s_register_audio_data(L, usage, path);
     AudioData *a_data = lua_touserdata(L, -1);
     lua_pop(L, 1);
-    Audio **audio = lua_newuserdata(L, sizeof(*audio));
+    Audio *audio = lua_newuserdata(L, sizeof(*audio));
     luaL_setmetatable(L, AUDIO_CLASS);
-    *audio = malloc(sizeof(Audio));
-    if (!*audio) {
-        fprintf(stderr, "Failed to alloc memory for audio\n");
-        exit(EXIT_FAILURE);
-    }
-    (*audio)->data.data = a_data->data;
-    (*audio)->data.size = a_data->size;
-    (*audio)->data.usage = a_data->usage;
+    audio->data.data = a_data->data;
+    audio->data.size = a_data->size;
+    audio->data.usage = a_data->usage;
 
     return 1;
 }
@@ -1090,7 +1158,7 @@ static int poti_volume(lua_State *L) {
 }
 
 static int l_poti_audio__play(lua_State *L) {
-    Audio **audio = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio *audio = luaL_checkudata(L, 1, AUDIO_CLASS);
     // mo_play(*buf);
     i32 index = 0;
     i32 i;
@@ -1104,7 +1172,7 @@ static int l_poti_audio__play(lua_State *L) {
     AudioBuffer *buffer = &poti()->audio.buffers[index];
     ma_decoder_config dec_config = ma_decoder_config_init(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS, AUDIO_DEVICE_SAMPLE_RATE);
     ma_result result = -1;
-    AudioData *a_data = &(*audio)->data;
+    AudioData *a_data = &(audio->data);
     buffer->usage = a_data->usage;
     buffer->size = a_data->size;
     if (a_data->usage == AUDIO_STREAM) {
@@ -1145,13 +1213,13 @@ static int l_poti_audio__pause(lua_State *L) {
 }
 
 static int l_poti_audio__playing(lua_State *L) {
-    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio *buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     lua_pushboolean(L, 1);
     return 1;
 }
 
 static int l_poti_audio__volume(lua_State *L) {
-    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio *buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     float volume = luaL_optnumber(L, 2, 0);
     // mo_volume(*buf, volume);
     return 0;
@@ -1160,7 +1228,7 @@ static int l_poti_audio__volume(lua_State *L) {
 static int l_poti_audio__pitch(lua_State *L) { return 0; }
 
 int l_poti_audio__gc(lua_State *L) {
-    Audio **buf = luaL_checkudata(L, 1, AUDIO_CLASS);
+    Audio *buf = luaL_checkudata(L, 1, AUDIO_CLASS);
     // mo_audio_destroy(*buf); 
     return 0;
 }
@@ -1203,7 +1271,7 @@ static int s_textype_from_string(lua_State *L, const char *name) {
     else if (!strcmp(name, "target")) usage = SDL_TEXTUREACCESS_TARGET;
     else {
         lua_pushstring(L, "Invalid texture usage");
-        return 0;
+        return -1;
     }
 
     return usage;
@@ -1213,6 +1281,7 @@ static int s_init_texture(Texture *tex, int target, int w, int h, int format, vo
     glGenTextures(1, &tex->handle);
     glBindTexture(GL_TEXTURE_2D, tex->handle);
 
+    tex->fbo = 0;
     tex->width = w;
     tex->height = h;
     tex->filter[0] = GL_NEAREST;
@@ -1230,6 +1299,21 @@ static int s_init_texture(Texture *tex, int target, int w, int h, int format, vo
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, GL_FALSE, format, GL_UNSIGNED_BYTE, data);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (target) {
+        // tex->target = 1;
+        glGenFramebuffers(1, &tex->fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, tex->fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex->handle, 0);
+
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            fprintf(stderr, "failed to create framebuffer\n");
+            exit(EXIT_FAILURE);
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
     return 1;
 }
 
@@ -1288,7 +1372,7 @@ static int s_texture_from_size(lua_State *L, Texture *tex) {
         s_usage = luaL_checkstring(L, top);
 
     int usage = s_textype_from_string(L, s_usage);
-    s_init_texture(tex, 0, w, h, GL_RGBA, NULL);
+    s_init_texture(tex, usage, w, h, GL_RGBA, NULL);
     // *tex = tea_texture(NULL, w, h, TEA_RGBA, usage);
     // *tex = SDL_CreateTexture(poti()->render, SDL_PIXELFORMAT_RGBA32, usage, w, h);
     if (!tex->handle) {
@@ -1302,6 +1386,7 @@ static int s_texture_from_size(lua_State *L, Texture *tex) {
 int l_poti_new_texture(lua_State *L) {
     Texture *tex = lua_newuserdata(L, sizeof(*tex));
     luaL_setmetatable(L, TEXTURE_CLASS);
+    tex->fbo = 0;
 
     switch(lua_type(L, 1)) {
         case LUA_TSTRING: s_texture_from_path(L, tex); break;
@@ -1329,31 +1414,39 @@ static int get_flip_from_table(lua_State *L, int index, int *flip) {
 
 static int l_poti_texture__draw(lua_State *L) {
     Texture *tex = luaL_checkudata(L, 1, TEXTURE_CLASS);
-    int index = 2;
-    int w, h;
+    i32 index = 2;
+    f32 w, h;
     w = tex->width;
     h = tex->height;
+    RENDER()->set_texture(tex);
 
     SDL_Rect s = {0, 0, w, h};
     s_get_rect_from_table(L, index++, &s);
-    s.x /= w;
-    s.y /= h;
-    s.w /= w;
-    s.h /= h;
 
-    SDL_Rect d = { 0, 0, s.w*w, s.h*h };
+    f32 uv[4];
+    uv[0] = (f32)s.x / w;
+    uv[1] = (f32)s.y / h;
+    uv[2] = (f32)s.w / w;
+    uv[3] = (f32)s.h / h;
+
+    SDL_Rect d = { 0, 0, s.w, s.h };
     s_get_rect_from_table(L, index++, &d);
 
     float *c = RENDER()->color;
+    vec2 tex_y = {uv[1], uv[1] + uv[3]};
+    if (tex->fbo != 0) {
+        tex_y[0] = 1.f - uv[1];
+        tex_y[1] = (1.f - uv[1]) - uv[3];
+    }
 
     float vertices[] = {
-        d.x, d.y, c[0], c[1], c[2], c[3], s.x, s.y,
-        d.x + d.w, d.y, c[0], c[1], c[2], c[3], s.x + s.w, s.y,
-        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], s.x + s.w, s.y + s.h,
+        d.x, d.y, c[0], c[1], c[2], c[3], uv[0], tex_y[0],
+        d.x + d.w, d.y, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[0],
+        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[1],
 
-        d.x, d.y, c[0], c[1], c[2], c[3], s.x, s.y,
-        d.x, d.y + d.h, c[0], c[1], c[2], c[3], s.x, s.y + s.h,
-        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], s.x + s.w, s.y + s.h,
+        d.x, d.y, c[0], c[1], c[2], c[3], uv[0], tex_y[0],
+        d.x, d.y + d.h, c[0], c[1], c[2], c[3], uv[0], tex_y[1],
+        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[1],
     };
 
     if (index > 3) {
@@ -1370,9 +1463,7 @@ static int l_poti_texture__draw(lua_State *L) {
     } else {
         // SDL_RenderCopy(poti()->render, *tex, &s, &d);
     }
-    glBindTexture(GL_TEXTURE_2D, tex->handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, 48 * sizeof(float), vertices);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    RENDER()->push_vertices(VERTEX(), 6, vertices);
 
     return 0;
 }
@@ -1567,16 +1658,125 @@ static int l_register_font_meta(lua_State* L) {
  * Shader
  *********************************/
 
+struct ShaderPair {
+    const char *vert;
+    const char *frag;
+};
+
+struct ShaderFactory {
+    char version[256];
+    struct ShaderPair uniforms;
+    struct ShaderPair attributes;
+    struct ShaderPair function;
+    struct ShaderPair main;
+};
+
+static struct ShaderFactory s_factory;
+
+static struct ShaderPair s_uniforms = {
+    // vert
+    "uniform mat4 u_World;\n"
+    "uniform mat4 u_ModelView;\n",
+    // frag
+    "uniform sampler2D u_Texture;\n"
+};
+
+static struct ShaderPair s_120_attributes = {
+    // vert
+    "attribute vec2 a_Position;\n"
+    "attribute vec4 a_Color;\n"
+    "attribute vec2 a_TexCoord;\n"
+    "varying vec4 v_Color;\n"
+    "varying vec2 v_TexCoord;\n",
+    // frag
+    "varying vec4 v_Color;\n"
+    "varying vec2 v_TexCoord;\n"
+    "#define o_FragColor gl_FragColor\n"
+    "#define texture texture2D\n"
+};
+
+static struct ShaderPair s_140_attributes = {
+    // vert
+    "in vec2 a_Position;\n"
+    "in vec4 a_Color;\n"
+    "in vec2 a_TexCoord;\n"
+    "out vec4 v_Color;\n"
+    "out vec2 v_TexCoord;\n",
+    // frag
+    "in vec4 v_Color;\n"
+    "in vec2 v_TexCoord;\n"
+    "out vec4 o_FragColor;\n"
+};
+
+static struct ShaderPair s_main = {
+    // vert
+    "\nvoid main() {\n"
+    "   v_Color = a_Color;\n"
+    "   v_TexCoord = a_TexCoord;\n"
+    "   gl_Position = position(a_Position, u_World, u_ModelView);\n"
+    "}",
+    // frag
+    "\nvoid main() {\n"
+    "   o_FragColor = pixel(v_Color, v_TexCoord, u_Texture);\n"
+    // "   gl_FragColor = pixel(v_Color, v_TexCoord, u_Texture);\n"
+    "}"
+};
+
+int s_compile_factory(struct ShaderFactory *f, int *vert, int *frag) {
+    int vert_len = strlen(f->version) + strlen(f->uniforms.vert) + strlen(f->attributes.vert) + strlen(f->function.vert) + strlen(f->main.vert);
+    int frag_len = strlen(f->version) + strlen(f->uniforms.frag) + strlen(f->attributes.frag) + strlen(f->function.frag) + strlen(f->main.frag);
+    
+    char vert_src[vert_len+1];
+    char frag_src[frag_len+1];
+
+    sprintf(vert_src, "");
+    sprintf(frag_src, "");
+
+    strcat(vert_src, f->version);
+    strcat(vert_src, f->uniforms.vert);
+    strcat(vert_src, f->attributes.vert);
+    strcat(vert_src, f->function.vert);
+    strcat(vert_src, f->main.vert);
+
+    strcat(frag_src, f->version);
+    strcat(frag_src, f->uniforms.frag);
+    strcat(frag_src, f->attributes.frag);
+    strcat(frag_src, f->function.frag);
+    strcat(frag_src, f->main.frag);
+
+    vert_src[vert_len] = '\0';
+    frag_src[frag_len] = '\0';
+
+    // fprintf(stderr, "%s\n", vert_src);
+    // fprintf(stderr, "%s\n", frag_src);
+
+    int vert_shd = s_compile_shader(vert_src, GL_VERTEX_SHADER);
+    int frag_shd = s_compile_shader(frag_src, GL_FRAGMENT_SHADER);
+
+    if (vert) *vert = vert_shd;
+    else glDeleteShader(vert_shd);
+
+    if (frag) *frag = frag_shd;
+    else glDeleteShader(frag_shd);
+
+    return 1;
+}
+
 int s_compile_shader(const char *source, int type) {
     u32 shader = glCreateShader(type);
     const i8 *type_str = (i8*)(type == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT");
-    char shader_define[128];
-    sprintf(shader_define, "#version 130\n#define %s_SHADER\n", type_str);
+    // char shader_define[128];
+    // sprintf(shader_define, "#version 140\n#define %s_SHADER\n", type_str);
 
-    GLchar const *files[] = {shader_define, source};
-    GLint lengths[] = {strlen(shader_define), strlen(source)};
+    // GLchar const *files[] = {shader_define, source};
+    // GLint lengths[] = {strlen(shader_define), strlen(source)};
 
-    glShaderSource(shader, 2, files, lengths);
+    // glShaderSource(shader, 2, files, lengths);
+
+    GLchar const *files[] = {source};
+    GLint lenghts[] = {strlen(source)};
+
+    glShaderSource(shader, 1, files, lenghts);
 
     glCompileShader(shader);
     int success;
@@ -1608,7 +1808,6 @@ int s_load_program(int vertex, int fragment) {
     return program;
 }
 
-
 static int l_poti_new_shader(lua_State *L) {
     Shader *shader = lua_newuserdata(L, sizeof(*shader));
     luaL_setmetatable(L, SHADER_CLASS);
@@ -1616,14 +1815,18 @@ static int l_poti_new_shader(lua_State *L) {
     const char *vert_source = luaL_checkstring(L, 1);
     const char *frag_source = luaL_checkstring(L, 2);
 
+    struct ShaderPair source;
+    source.vert = vert_source;
+    source.frag = frag_source;
+
     int vert, frag;
 
-    vert = s_compile_shader(vert_source, GL_VERTEX_SHADER);
-    frag = s_compile_shader(frag_source, GL_FRAGMENT_SHADER);
+    memcpy(&s_factory.function, &source, sizeof(struct ShaderPair));
+    s_compile_factory(&s_factory, &vert, &frag);
 
     shader->handle = s_load_program(vert, frag);
     shader->u_world = glGetUniformLocation(shader->handle, "u_World");
-    shader->u_modelview = glGetUniformLocation(shader->handle, "u_Modelview");
+    shader->u_modelview = glGetUniformLocation(shader->handle, "u_ModelView");
 
     glDeleteShader(vert);
     glDeleteShader(frag);
@@ -1633,6 +1836,11 @@ static int l_poti_new_shader(lua_State *L) {
 
 static int l_poti_shader__set(lua_State *L) {
     Shader *s = luaL_checkudata(L, 1, SHADER_CLASS);
+    RENDER()->set_shader(s);
+
+#if 0
+    RENDER()->draw_vertex(VERTEX());
+    RENDER()->clear_vertex(VERTEX());
     glUseProgram(s->handle);
     mat4x4 world, modelview;
     mat4x4_identity(world);
@@ -1643,12 +1851,100 @@ static int l_poti_shader__set(lua_State *L) {
 
     glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *world);
     glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, *modelview);
+#endif
 
     return 0;
 }
 
-static int l_poti_shader__unset(lua_State *L) {
+/* static int l_poti_shader__unset(lua_State *L) {
     glUseProgram(0);
+    return 0;
+} */
+
+static int l_poti_shader__location(lua_State *L) {
+    Shader *shader = luaL_checkudata(L, 1, SHADER_CLASS);
+    const char *name = luaL_checkstring(L, 2);
+    lua_pushinteger(L, glGetUniformLocation(shader->handle, name));
+    return 1;
+}
+
+static int s_send_shader_float(lua_State *L, Shader *s, const char *n) {
+    int top = lua_gettop(L);
+    int count = top - 2;
+    float v[count];
+    for (int i = 0; i < count; i++) {
+        v[i] = luaL_checknumber(L, i+3);
+    }
+    int loc = glGetUniformLocation(s->handle, n);
+    glUniform1fv(loc, count, v);
+
+    return 1;
+}
+
+static int s_send_shader_vector(lua_State *L, Shader *s, const char *n) {
+    int top = lua_gettop(L);
+    int count = top - 2;
+
+    int len = lua_rawlen(L, 3);
+    PFNGLUNIFORM2FVPROC glUniformfv = NULL;
+    PFNGLUNIFORM2FVPROC fns[] = {
+        glUniform1fv,
+        glUniform2fv,
+        glUniform3fv,
+        glUniform4fv
+    };
+
+    // fprintf(stderr, "count: %d, len: %d\n", count, len);
+    float v[count*len];
+
+    if ((len - 1) >= 0 && (len - 1) <= 3) glUniformfv = fns[len-1];
+    else {
+        lua_pushstring(L, "invalid vector size");
+        lua_error(L);
+        return 0;
+    }
+    int i, j;
+    float *pv = v;
+    for (i = 0; i < count; i++) {
+        for (j = 0; j < len; j++) {
+            lua_pushnumber(L, j+1);
+            lua_gettable(L, 3+i);
+            *pv = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            pv++;
+        }
+    }
+
+    int loc = glGetUniformLocation(s->handle, n);
+    // fprintf(stderr, "okok: %p %p\n", glUniformfv, glUniform4fv);
+    glUniformfv(loc, count, v);
+
+
+    return 1;
+}
+
+static int s_send_shader_boolean(lua_State *L, Shader *s, const char *n) {
+    int top = lua_gettop(L);
+    int count = top - 2;
+    float v[count];
+    for (int i = 0; i < count; i++) {
+        v[i] = lua_toboolean(L, i+3);
+    }
+    int loc = glGetUniformLocation(s->handle, n);
+    glUniform1fv(loc, count, v);
+
+    return 1;
+}
+
+static int l_poti_shader__send(lua_State *L) {
+    Shader *shader = luaL_checkudata(L, 1, SHADER_CLASS);
+    const char *name = luaL_checkstring(L, 2);
+   
+    int tp = lua_type(L, 3);
+    if (tp == LUA_TNUMBER) s_send_shader_float(L, shader, name);
+    else if (tp == LUA_TTABLE) s_send_shader_vector(L, shader, name);
+    else if (tp == LUA_TBOOLEAN) s_send_shader_boolean(L, shader, name);
+
     return 0;
 }
 
@@ -1662,7 +1958,9 @@ static int l_register_shader_meta(lua_State *L) {
     lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_meta);
     luaL_Reg reg[] = {
         {"set", l_poti_shader__set},
-        {"unset", l_poti_shader__unset},
+        {"location", l_poti_shader__location},
+        {"send", l_poti_shader__send},
+        // {"unset", l_poti_shader__unset},
         {"__gc", l_poti_shader__gc},
         {NULL, NULL}
     };
@@ -1673,6 +1971,12 @@ static int l_register_shader_meta(lua_State *L) {
     lua_setfield(L, -2, "__index");
     lua_setfield(L, -2, SHADER_CLASS);
     lua_pop(L, 1);
+
+    strcpy(s_factory.version, "#version 140\n");
+    memcpy(&s_factory.uniforms, &s_uniforms, sizeof(struct ShaderPair));
+    memcpy(&s_factory.attributes, &s_140_attributes, sizeof(struct ShaderPair));
+    memcpy(&s_factory.main, &s_main, sizeof(struct ShaderPair));
+
     return 0;
 }
 
@@ -1697,6 +2001,8 @@ static int l_poti_render_mode(lua_State *L) {
     int mode = 0;
     if (!strcmp(mode_str, "line")) mode = 0;
     else if (!strcmp(mode_str, "fill")) mode = 1;
+    RENDER()->draw_vertex(VERTEX());
+    RENDER()->clear_vertex(VERTEX());
     RENDER()->draw_mode = mode;
     return 0;
 }
@@ -1712,11 +2018,9 @@ static int l_poti_render_color(lua_State *L) {
 }
 
 static int l_poti_render_target(lua_State *L) {
-    Texture *tex = luaL_testudata(L, 1, TEXTURE_CLASS);
-    int fbo = 0;
-    if (tex) fbo = tex->fbo;
-    RENDER()->target = tex;
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    Texture *target = luaL_testudata(L, 1, TEXTURE_CLASS);
+    target = target ? target : &RENDER()->def_target;
+    RENDER()->set_target(target);
     return 0;
 }
 
@@ -1759,7 +2063,6 @@ static int l_poti_render_line(lua_State *L) {
 typedef void(*DrawCircle)(float, float, float, int);
 
 static void draw_filled_circle(float xc, float yc, float radius, int segments) {
-
     float sides = segments >= 4 ? segments : 4;
     int bsize = (3*sides) * 8 * sizeof(float);
     float vertices[bsize];
@@ -1804,8 +2107,9 @@ static void draw_filled_circle(float xc, float yc, float radius, int segments) {
         v += 8;
     }
 
-    glBufferSubData(GL_ARRAY_BUFFER, 0, bsize, vertices);
-    glDrawArrays(GL_TRIANGLES, 0, 3*sides);
+    // glBufferSubData(GL_ARRAY_BUFFER, 0, bsize, vertices);
+    // glDrawArrays(GL_TRIANGLES, 0, 3*sides);
+    RENDER()->push_vertices(VERTEX(), 3*sides, vertices);
 }
 
 static void draw_lined_circle(float xc, float yc, float radius, int segments) {
@@ -1841,9 +2145,10 @@ static void draw_lined_circle(float xc, float yc, float radius, int segments) {
         v[7] = 0.f;
         v += 8;
     }
+    RENDER()->push_vertices(VERTEX(), 2*sides, vertices);
 
-    glBufferSubData(GL_ARRAY_BUFFER, 0, bsize, vertices);
-    glDrawArrays(GL_LINES, 0, sides*2);
+    // glBufferSubData(GL_ARRAY_BUFFER, 0, bsize, vertices);
+    // glDrawArrays(GL_LINES, 0, sides*2);
 }
 
 static int l_poti_render_circle(lua_State *L) {
@@ -1854,14 +2159,13 @@ static int l_poti_render_circle(lua_State *L) {
 
     float radius = luaL_checknumber(L, 3);
     float segments = luaL_optnumber(L, 4, 16);
+    RENDER()->set_texture(RENDER()->white);
 
     DrawCircle fn[2] = {
         draw_lined_circle,
         draw_filled_circle
     };
 
-    Texture *tex = RENDER()->white;
-    glBindTexture(GL_TEXTURE_2D, tex->handle);
     fn[(int)RENDER()->draw_mode](x, y, radius, segments);
 
     return 0;
@@ -1881,8 +2185,9 @@ static void draw_filled_rect(SDL_Rect *r) {
         r->x + r->w, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
     };
 
-    glBufferSubData(GL_ARRAY_BUFFER, 0, 48 * sizeof(float), vertices);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    // glBufferSubData(GL_ARRAY_BUFFER, 0, 48 * sizeof(float), vertices);
+    // glDrawArrays(GL_TRIANGLES, 0, 6);
+    RENDER()->push_vertices(VERTEX(), 6, vertices);
 }
 
 static void draw_lined_rect(SDL_Rect *r) {
@@ -1901,8 +2206,9 @@ static void draw_lined_rect(SDL_Rect *r) {
         r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
     };
 
-    glBufferSubData(GL_ARRAY_BUFFER, 0, 64 * sizeof(float), vertices);
-    glDrawArrays(GL_LINES, 0, 8);
+    //glBufferSubData(GL_ARRAY_BUFFER, 0, 64 * sizeof(float), vertices);
+    //glDrawArrays(GL_LINES, 0, 8);
+    RENDER()->push_vertices(VERTEX(), 8, vertices);
 }
 
 static int l_poti_render_rectangle(lua_State *L) {
@@ -1913,14 +2219,13 @@ static int l_poti_render_rectangle(lua_State *L) {
     r.y = luaL_checknumber(L, 2);
     r.w = luaL_checknumber(L, 3);
     r.h = luaL_checknumber(L, 4);
+    RENDER()->set_texture(RENDER()->white);
 
     DrawRect fn[2] = {
         draw_lined_rect,
         draw_filled_rect
     };
 
-    Texture *tex = RENDER()->white;
-    glBindTexture(GL_TEXTURE_2D, tex->handle);
     fn[(int)RENDER()->draw_mode](&r);
     
     return 0;
@@ -1935,8 +2240,7 @@ static void draw_filled_triangle(float x0, float y0, float x1, float y1, float x
         x2, y2, c[0], c[1], c[2], c[3], 1.f, 1.f
     };
 
-    glBufferSubData(GL_ARRAY_BUFFER, 0, 24 * sizeof(float), vertices);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    RENDER()->push_vertices(VERTEX(), 3, vertices);
 }
 
 static void draw_lined_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
@@ -1951,9 +2255,7 @@ static void draw_lined_triangle(float x0, float y0, float x1, float y1, float x2
         x2, y2, c[0], c[1], c[2], c[3], 1.f, 1.f,
         x0, y0, c[0], c[1], c[2], c[3], 0.5f, 0.f
     };
-
-    glBufferSubData(GL_ARRAY_BUFFER, 0, 48 * sizeof(float), vertices);
-    glDrawArrays(GL_LINES, 0, 6);
+    RENDER()->push_vertices(VERTEX(), 6, vertices);
 }
 
 static int l_poti_render_triangle(lua_State *L) {
@@ -1964,6 +2266,7 @@ static int l_poti_render_triangle(lua_State *L) {
         points[i] = luaL_checknumber(L, i+1);
     }
 
+    RENDER()->set_texture(RENDER()->white);
     const DrawTriangle fn[] = {
         draw_lined_triangle,
         draw_filled_triangle
@@ -2068,6 +2371,7 @@ void s_font_print(Font* font, float x, float y, const char* text) {
     #if 1
     float vertices[count*8];
     float *v = vertices;
+    RENDER()->set_texture(font->tex);
     while (*p) {
         int codepoint;
         p = poti()->utf8_codepoint(p, &codepoint);
@@ -2097,10 +2401,11 @@ void s_font_print(Font* font, float x, float y, const char* text) {
         v += 48;
         // SDL_RenderCopy(poti()->render, font->tex, &src, &dest);
     }
-
-    glBindTexture(GL_TEXTURE_2D, font->tex->handle);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, count * 8 * sizeof(float), vertices);
-    glDrawArrays(GL_TRIANGLES, 0, count);
+    RENDER()->push_vertices(VERTEX(), count, vertices);
+    
+    // glBindTexture(GL_TEXTURE_2D, font->tex->handle);
+    // glBufferSubData(GL_ARRAY_BUFFER, 0, count * 8 * sizeof(float), vertices);
+    // glDrawArrays(GL_TRIANGLES, 0, count);
     #else
     glBindTexture(GL_TEXTURE_2D, font->tex->handle);
     float vertices[] = {
@@ -2944,17 +3249,29 @@ static int poti_init(int argc, char **argv) {
         fprintf(stderr, "Failed to create SDL2 window: %s\n", SDL_GetError());
         exit(0);
     }
+    VERTEX() = &RENDER()->def_vertex;
     //SDL_Renderer *render = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     poti()->gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, poti()->gl_context);
     poti()->keys = SDL_GetKeyboardState(NULL);
     poti()->window = window;
 
-    if (gl3wInit()) {
-        fprintf(stderr, "failed to initialize OpenGL\n");
+    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+        fprintf(stderr, "failed to initialize OpenGL context\n");
         exit(0);
     }
 
+    const i8 *version = glGetString(GL_VERSION);
+    const i8 *glsl = glGetString(GL_SHADING_LANGUAGE_VERSION);
+
+    fprintf(stderr, "GL { version: %s, glsl: %s }\n", version, glsl);
+
+
+    RENDER()->init_vertex(VERTEX(), 10000);
+#if 0
     glGenBuffers(1, &RENDER()->buffer.handle);
     glGenVertexArrays(1, &RENDER()->vao);
 
@@ -2971,7 +3288,7 @@ static int poti_init(int argc, char **argv) {
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(sizeof(float) * 6));
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
-
+#endif
     lua_pushcfunction(L, l_poti_new_shader);
     lua_pushstring(L, vert_shader);
     lua_pushstring(L, frag_shader);
@@ -3082,12 +3399,16 @@ static int poti_step() {
     }
     lua_pop(L, 1);
     double current_time = SDL_GetTicks();
-    poti()->delta = (current_time - poti()->last_time) / 1000.f;
-    poti()->last_time = current_time;
+    poti()->timer.delta = (current_time - poti()->timer.last) / 1000.f;
+    poti()->timer.last = current_time;
 
     int ww, wh;
     SDL_GetWindowSize(poti()->window, &ww, &wh);
     glViewport(0, 0, ww, wh);
+    Texture *target = &RENDER()->def_target;
+    target->fbo = 0;
+    target->width = ww;
+    target->height = wh;
 
     glClearColor(0.3f, 0.4f, 0.4f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -3095,6 +3416,7 @@ static int poti_step() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+#if 0
     Shader *shader = RENDER()->def_shader;
     glUseProgram(shader->handle);
     mat4x4 world, modelview;
@@ -3106,11 +3428,19 @@ static int poti_step() {
 
     glUniformMatrix4fv(shader->u_world, 1, GL_FALSE, *world);
     glUniformMatrix4fv(shader->u_modelview, 1, GL_FALSE, *modelview);
-
-    glBindVertexArray(RENDER()->vao);
-    glBindBuffer(GL_ARRAY_BUFFER, RENDER()->buffer.handle);
+#endif
+    // setup states
+    RENDER()->draw_calls = 0;
+    RENDER()->clear_vertex(VERTEX());
+    RENDER()->set_shader(RENDER()->def_shader);
+    RENDER()->set_texture(RENDER()->white);
+    RENDER()->set_target(&RENDER()->def_target);
+    RENDER()->bind_vertex(VERTEX());
+    
     lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_step);
     lua_pcall(L, 0, 0, 0);
+    RENDER()->draw_vertex(VERTEX());
+    // printf("draw calls: %d\n", RENDER()->draw_calls);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
@@ -3170,6 +3500,129 @@ int main(int argc, char ** argv) {
     poti_loop();
     poti_quit();
     return 1;
+}
+
+static void s_init_vertex(Vertex *v, u32 size) {
+   glGenVertexArrays(1, &v->vao);
+   glGenBuffers(1, &v->vbo);
+   glBindVertexArray(v->vao);
+   glBindBuffer(GL_ARRAY_BUFFER, v->vbo);
+
+   v->index = 0;
+   v->size = size;
+   v->data = malloc(size);
+
+   glBufferData(GL_ARRAY_BUFFER, size, NULL, GL_DYNAMIC_DRAW);
+
+   glEnableVertexAttribArray(0);
+   glEnableVertexAttribArray(1);
+   glEnableVertexAttribArray(2);
+
+   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(f32), (void*)0);
+   glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(f32), (void*)(sizeof(f32) * 2));
+   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(f32), (void*)(sizeof(f32) * 6));
+
+   glBindBuffer(GL_ARRAY_BUFFER, 0);
+   glBindVertexArray(0);
+}
+
+static void s_bind_vertex(Vertex *v) {
+    glBindVertexArray(v->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, v->vbo);
+}
+
+static void s_clear_vertex(Vertex *v) {
+    v->index = 0;
+}
+
+static void s_set_texture(Texture *t) {
+    if (RENDER()->tex != t) {
+        RENDER()->draw_vertex(VERTEX());
+        RENDER()->clear_vertex(VERTEX());
+        RENDER()->tex = t;
+        glBindTexture(GL_TEXTURE_2D, t->handle);
+    }
+}
+
+static void s_set_shader(Shader *s) {
+    if (RENDER()->shader != s) {
+        RENDER()->draw_vertex(VERTEX());
+        RENDER()->clear_vertex(VERTEX());
+        RENDER()->shader = s;
+        glUseProgram(s->handle);
+        mat4x4 world, modelview;
+        mat4x4_identity(world);
+        mat4x4_identity(modelview);
+        GLint view[4];
+        glGetIntegerv(GL_VIEWPORT, view);
+        mat4x4_ortho(world, 0, view[2], view[3], 0, 0, 1);
+
+        glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *world);
+        glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, *modelview);
+        RENDER()->shader = s;
+    }
+}
+
+static void s_set_target(Texture *t) {
+    if (t != &RENDER()->def_target && t->fbo == 0) return;
+    if (RENDER()->target != t) {
+        RENDER()->draw_vertex(VERTEX());
+        RENDER()->clear_vertex(VERTEX());
+        RENDER()->target = t;
+        glBindFramebuffer(GL_FRAMEBUFFER, t->fbo);
+        glViewport(0, 0, t->width, t->height);
+
+        Shader *s = RENDER()->shader;
+
+        mat4x4 world, modelview;
+        mat4x4_identity(world);
+        mat4x4_identity(modelview);
+        GLint view[4];
+        glGetIntegerv(GL_VIEWPORT, view);
+        mat4x4_ortho(world, 0, view[2], view[3], 0, 0, 1);
+
+        glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *world);
+        glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, *modelview);
+    }
+}
+
+static void s_push_vertex(Vertex *vert, f32 x, f32 y, f32 r, f32 g, f32 b, f32 a, f32 u, f32 v) {
+    f32 buf[] = {
+        x, y, r, g, b, a, u, v
+    };
+    u32 size = sizeof(f32) * 8;
+    if (vert->index + size > vert->size) {
+        vert->size *= 2;
+        vert->data = realloc(vert->data, vert->size);
+    }
+    char *data = ((char*)vert->data)+vert->index;
+    vert->index += size;
+    memcpy(data, buf, size);
+}
+
+static void s_push_vertices(Vertex *vert, u32 count, f32 *vertices) {
+    u32 size = sizeof(f32) * 8 * count;
+    if (vert->index + size > vert->size) {
+        vert->size *= 2;
+        vert->data = realloc(vert->data, vert->size);
+    }
+    char *data = ((char*)vert->data)+vert->index;
+    vert->index += size;
+    memcpy(data, vertices, size);
+}
+
+static void s_flush_vertex(Vertex *v) {
+    glBufferSubData(GL_ARRAY_BUFFER, 0, v->index, v->data);
+}
+
+static void s_draw_vertex(Vertex *v) {
+    if (v->index <= 0) return;
+    s_flush_vertex(v); 
+    u32 modes[] = {
+        GL_LINES, GL_TRIANGLES
+    };
+    RENDER()->draw_calls++;
+    glDrawArrays(modes[(i32)RENDER()->draw_mode], 0, v->index / (sizeof(f32)*8));
 }
 
 char read_buffer[1024];
@@ -3336,7 +3789,7 @@ static i32 s_init_font(Font* font, const void* data, size_t buf_size, i32 font_s
     font->tex = tex;
     return 1;
 }
-
+#if 0
 static Font* s_load_font(const i8* filename, i32 font_size) {
     Font* font = malloc(sizeof(*font));
     if (!font) {
@@ -3349,18 +3802,7 @@ static Font* s_load_font(const i8* filename, i32 font_size) {
     free(buf);
     return font;
 }
-
-int s_setup_function_ptrs(struct Context* ctx) {
-    ctx->read_file = s_read_file;
-    if (poti()->is_packed)
-        ctx->read_file = s_read_file_packed;
-    ctx->init_font = s_init_font;
-    ctx->init_texture = s_init_texture;
-    // ctx->load_font = s_load_font;
-    ctx->utf8_codepoint = s_utf8_codepoint;
-
-    return 1;
-}
+#endif
 
 u32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, f32* output, u32 frames) {
     f32 temp[4096];
@@ -3469,6 +3911,28 @@ int s_get_point_from_table(lua_State *L, int index, SDL_Point *p) {
 
     p->x = parts[0];
     p->y = parts[1];
+
+    return 1;
+}
+
+int s_setup_function_ptrs(struct Context* ctx) {
+    ctx->read_file = s_read_file;
+    if (poti()->is_packed)
+        ctx->read_file = s_read_file_packed;
+    ctx->init_font = s_init_font;
+    ctx->init_texture = s_init_texture;
+    // ctx->load_font = s_load_font;
+    ctx->utf8_codepoint = s_utf8_codepoint;
+    ctx->render.init_vertex = s_init_vertex;
+    ctx->render.bind_vertex = s_bind_vertex;
+    ctx->render.clear_vertex = s_clear_vertex;
+    ctx->render.push_vertex = s_push_vertex;
+    ctx->render.push_vertices = s_push_vertices;
+    ctx->render.draw_vertex = s_draw_vertex;
+
+    ctx->render.set_shader = s_set_shader;
+    ctx->render.set_texture = s_set_texture;
+    ctx->render.set_target = s_set_target;
 
     return 1;
 }

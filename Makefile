@@ -7,7 +7,7 @@ CLEAR_FILES =
 USEJIT = 0
 
 LUA_DIR = external/lua/src
-GL3W_DIR = external/gl3w
+GLAD_DIR = external/glad
 
 TARGET ?= Linux
 ifeq ($(OS), Windows_NT)
@@ -19,7 +19,7 @@ LUA_SRC := $(filter-out $(LUA_DIR)/lua.c,$(LUA_SRC))
 LUA_SRC := $(filter-out $(LUA_DIR)/luac.c,$(LUA_SRC))
 
 SRC = poti.c impl.c $(LUA_SRC)
-INCL = -Iexternal/ -I$(LUA_DIR) -I$(GL3W_DIR)/include
+INCL = -Iexternal/ -I$(LUA_DIR) -I$(GLAD_DIR)/include
 EXE = .bin
 
 ifeq ($(TARGET), Windows)

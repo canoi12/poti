@@ -16,3 +16,4 @@ cross
 *.bin
 VC
 external/SDL2
+.cache
