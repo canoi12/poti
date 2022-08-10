@@ -1689,7 +1689,7 @@ static struct ShaderPair s_uniforms = {
     "uniform sampler2D u_Texture;\n"
 };
 
-static struct ShaderPair s_120_attributes = {
+static struct ShaderPair s_100_attributes = {
     // vert
     "attribute vec2 a_Position;\n"
     "attribute vec4 a_Color;\n"
@@ -1703,7 +1703,7 @@ static struct ShaderPair s_120_attributes = {
     "#define texture texture2D\n"
 };
 
-static struct ShaderPair s_140_attributes = {
+static struct ShaderPair s_130_attributes = {
     // vert
     "in vec2 a_Position;\n"
     "in vec4 a_Color;\n"
@@ -1716,7 +1716,7 @@ static struct ShaderPair s_140_attributes = {
     "out vec4 o_FragColor;\n"
 };
 
-static struct ShaderPair s_400_attributes = {
+static struct ShaderPair s_330_attributes = {
     // vert
     "layout (location = 0) in vec2 a_Position;\n"
     "layout (location = 1) in vec4 a_Color;\n"
@@ -1983,15 +1983,13 @@ static int l_poti_shader__gc(lua_State *L) {
 static void s_setup_shader_factory() {
     // fprintf(stderr, "GL { version: %s, glsl: %s }\n", gl_version, glsl_version);
     // fprintf(stderr, "GL maj: %d, GL min: %d\n", GLVersion.major, GLVersion.minor);
-    if (GL()->major >= 4) {
-        strcpy(s_factory.version, "#version 400\n");
-        memcpy(&s_factory.attributes, &s_400_attributes, sizeof(struct ShaderPair));
-    } else if (GL()->major >= 3) {
-        strcpy(s_factory.version, "#version 130\n");
-        memcpy(&s_factory.attributes, &s_140_attributes, sizeof(struct ShaderPair));
-    } else if (GL()->major >= 2) {
-        strcpy(s_factory.version, "#version 120\n");
-        memcpy(&s_factory.attributes, &s_120_attributes, sizeof(struct ShaderPair));
+    sprintf(s_factory.version, "#version %d\n", GL()->glsl);
+    if (GL()->glsl >= 330) {
+        memcpy(&s_factory.attributes, &s_330_attributes, sizeof(struct ShaderPair));
+    } else if (GL()->glsl >= 130) {
+        memcpy(&s_factory.attributes, &s_130_attributes, sizeof(struct ShaderPair));
+    } else if (GL()->glsl >= 100) {
+        memcpy(&s_factory.attributes, &s_100_attributes, sizeof(struct ShaderPair));
     }
     memcpy(&s_factory.uniforms, &s_uniforms, sizeof(struct ShaderPair));
     memcpy(&s_factory.main, &s_main, sizeof(struct ShaderPair));
@@ -3290,7 +3288,7 @@ static int poti_init(int argc, char **argv) {
     //SDL_Renderer *render = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     poti()->gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, poti()->gl_context);
     poti()->keys = SDL_GetKeyboardState(NULL);

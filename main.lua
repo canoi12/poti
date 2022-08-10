@@ -105,6 +105,7 @@ function poti.draw()
     poti.render.color(255, 255, 255)
     target:draw(nil, {0, 0, 640, 380})
     def:set()
+    poti.render.circle(0, 0, 32)
     -- tex:draw({0, 0, 160, 90})
     -- poti.render.triangle(64, 64, 32, 128, 96, 128)
 end
