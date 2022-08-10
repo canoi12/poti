@@ -34,7 +34,7 @@ function poti.load()
     )
     def = poti.render.default_shader()
     target = poti.Texture(320, 190, "target")
-    tex = poti.Texture("magnifique.jpg")
+    -- tex = poti.Texture("magnifique.jpg")
     palette = {
         {124, 63, 88, 255},
         {235, 107, 111, 255},
@@ -56,7 +56,7 @@ function poti.load()
         {226, 243, 228, 255}
     }
 
-    curr_pal = gb_pal
+    curr_pal = spirit_pal
 
     for i,t in ipairs(curr_pal) do
         t[1] = t[1] / 255
@@ -87,7 +87,7 @@ function poti.draw()
     -- poti.render.clear(0.3 * 255, 0.4 * 255, 0.4 * 255, 255)
     local p = curr_pal[3]
     poti.render.clear(p[1] * 255, p[2] * 255, p[3] * 255)
-    tex:draw()
+    -- tex:draw()
     poti.render.circle(64+x, 64, 12, 16)
     poti.render.mode("line")
     poti.render.color(0, 0, 0, 255)

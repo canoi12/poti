@@ -1,10 +1,7 @@
 function poti.load()
-    print("testandow")
-    tex = poti.Texture("bird.png")
     x = 0
     time = 0
     shader = poti.render.default_shader()
-    print(shader)
 end
 
 function poti.update(dt)

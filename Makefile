@@ -28,7 +28,7 @@ ifeq ($(TARGET), Windows)
 	PREFIX := x86_64-w64-mingw32-
 	CFLAGS = -Wall -std=c99
 	INCL += -Iexternal/SDL2/include
-	LFLAGS = -mwindows -lpthread -lmingw32 -Lexternal/SDL2/lib -lSDL2
+	LFLAGS = -mwindows -lpthread -lmingw32 -Lexternal/SDL2/lib -lSDL2 -lopengl32
 else
 	ifeq ($(TARGET), Web)
 		CC := emcc
@@ -38,7 +38,7 @@ else
 		CLEAR_FILES = *.wasm *.js
 	else
 		CFLAGS = -Wall -std=c99 `sdl2-config --cflags`
-		LFLAGS = -lm -lpthread -lSDL2 -ldl `sdl2-config --libs`
+		LFLAGS = -lm -lpthread -lSDL2 -ldl `sdl2-config --libs` -lGL
 	endif
 endif
 CDEFS =

@@ -19,6 +19,7 @@
     #include <SDL2/SDL.h>
 #else
     #include <SDL.h>
+    #include <SDL_opengl.h>
 #endif
 #else
     #include <SDL2/SDL.h>
@@ -55,6 +56,7 @@
 
 #define poti() (&_ctx)
 #define POTI() (&_ctx)
+#define GL() (&POTI()->gl)
 #define RENDER() (&POTI()->render)
 #define TIMER() (&POTI()->timer)
 #define INPUT() (&POTI()->input)
@@ -186,6 +188,12 @@ struct Context {
     lua_State *L;
     Window *window;
     //Render *render;
+    struct {
+        i8 major, minor;
+        i16 glsl;
+        i8 es;
+    } gl;
+
     struct {
         u32 draw_calls;
         i8 draw_mode;
@@ -1708,6 +1716,19 @@ static struct ShaderPair s_140_attributes = {
     "out vec4 o_FragColor;\n"
 };
 
+static struct ShaderPair s_400_attributes = {
+    // vert
+    "layout (location = 0) in vec2 a_Position;\n"
+    "layout (location = 1) in vec4 a_Color;\n"
+    "layout (location = 2) in vec2 a_TexCoord;\n"
+    "out vec4 v_Color;\n"
+    "out vec2 v_TexCoord;\n",
+    // frag
+    "in vec4 v_Color;\n"
+    "in vec2 v_TexCoord;\n"
+    "layout (location = 0) out vec4 o_FragColor;\n"
+};
+
 static struct ShaderPair s_main = {
     // vert
     "\nvoid main() {\n"
@@ -1728,6 +1749,8 @@ int s_compile_factory(struct ShaderFactory *f, int *vert, int *frag) {
     
     char vert_src[vert_len+1];
     char frag_src[frag_len+1];
+    // char* vert_src = malloc(vert_len + 1);
+    // char* frag_src = malloc(frag_len + 1);
 
     sprintf(vert_src, "");
     sprintf(frag_src, "");
@@ -1752,6 +1775,9 @@ int s_compile_factory(struct ShaderFactory *f, int *vert, int *frag) {
 
     int vert_shd = s_compile_shader(vert_src, GL_VERTEX_SHADER);
     int frag_shd = s_compile_shader(frag_src, GL_FRAGMENT_SHADER);
+
+    // free(vert_src);
+    // free(frag_src);
 
     if (vert) *vert = vert_shd;
     else glDeleteShader(vert_shd);
@@ -1954,6 +1980,23 @@ static int l_poti_shader__gc(lua_State *L) {
     return 0;
 }
 
+static void s_setup_shader_factory() {
+    // fprintf(stderr, "GL { version: %s, glsl: %s }\n", gl_version, glsl_version);
+    // fprintf(stderr, "GL maj: %d, GL min: %d\n", GLVersion.major, GLVersion.minor);
+    if (GL()->major >= 4) {
+        strcpy(s_factory.version, "#version 400\n");
+        memcpy(&s_factory.attributes, &s_400_attributes, sizeof(struct ShaderPair));
+    } else if (GL()->major >= 3) {
+        strcpy(s_factory.version, "#version 130\n");
+        memcpy(&s_factory.attributes, &s_140_attributes, sizeof(struct ShaderPair));
+    } else if (GL()->major >= 2) {
+        strcpy(s_factory.version, "#version 120\n");
+        memcpy(&s_factory.attributes, &s_120_attributes, sizeof(struct ShaderPair));
+    }
+    memcpy(&s_factory.uniforms, &s_uniforms, sizeof(struct ShaderPair));
+    memcpy(&s_factory.main, &s_main, sizeof(struct ShaderPair));
+}
+
 static int l_register_shader_meta(lua_State *L) {
     lua_rawgetp(L, LUA_REGISTRYINDEX, &lr_meta);
     luaL_Reg reg[] = {
@@ -1971,12 +2014,6 @@ static int l_register_shader_meta(lua_State *L) {
     lua_setfield(L, -2, "__index");
     lua_setfield(L, -2, SHADER_CLASS);
     lua_pop(L, 1);
-
-    strcpy(s_factory.version, "#version 140\n");
-    memcpy(&s_factory.uniforms, &s_uniforms, sizeof(struct ShaderPair));
-    memcpy(&s_factory.attributes, &s_140_attributes, sizeof(struct ShaderPair));
-    memcpy(&s_factory.main, &s_main, sizeof(struct ShaderPair));
-
     return 0;
 }
 
@@ -3252,8 +3289,8 @@ static int poti_init(int argc, char **argv) {
     VERTEX() = &RENDER()->def_vertex;
     //SDL_Renderer *render = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     poti()->gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, poti()->gl_context);
     poti()->keys = SDL_GetKeyboardState(NULL);
@@ -3267,8 +3304,31 @@ static int poti_init(int argc, char **argv) {
     const i8 *version = glGetString(GL_VERSION);
     const i8 *glsl = glGetString(GL_SHADING_LANGUAGE_VERSION);
 
-    fprintf(stderr, "GL { version: %s, glsl: %s }\n", version, glsl);
+    fprintf(stderr, "%s // %s\n", version, glsl);
 
+    const i8 *prefixes[] = {
+        "OpenGL ES-CM ",
+        "OpenGL ES-CL ",
+        "OpenGL ES ",
+        NULL,
+    };
+    GL()->es = 0;
+    i8 *ver = (i8*)version;
+    for (u32 i = 0; prefixes[i] != NULL; i++) {
+        if (strncmp(ver, prefixes[i], strlen(prefixes[i])) == 0) {
+            ver += strlen(prefixes[i]);
+            GL()->es = 1;
+            break;
+        }
+    }
+    GL()->major = ver[0] - '0';
+    GL()->minor = ver[2] - '0';
+    float fglsl = atof(glsl);
+    GL()->glsl = fglsl * 100;
+
+    fprintf(stderr, "GL: { ver: %d.%d, glsl: %d, es: %s }\n", GL()->major, GL()->minor, GL()->glsl, GL()->es ? "true" : "false");
+    
+    s_setup_shader_factory();
 
     RENDER()->init_vertex(VERTEX(), 10000);
 #if 0
