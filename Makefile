@@ -46,6 +46,7 @@ CDEFS =
 OUT = $(NAME)$(EXE)
 GEN = gen$(EXE)
 OBJ = $(SRC:%.c=%.o)
+EMBED = font.ttf embed/shader.lua
 
 .PHONY: all build
 .SECONDARY: boot.lua
@@ -54,11 +55,11 @@ all: build
 
 build: $(OUT)
 
-poti.h: $(GEN)
+poti.h: $(GEN) $(EMBED)
 	@echo "********************************************************"
 	@echo "** GENERATING $@"
 	@echo "********************************************************"
-# 	./$(GEN)
+	./$(GEN) -n EMBED_H -t embed.h $(EMBED)
 
 $(GEN): gen.o
 	@echo "********************************************************"

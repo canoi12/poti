@@ -1,10 +1,121 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <sys/stat.h>
 
+#include <dirent.h>
+
+char header_name[256] = "GEN_H";
 FILE *fp;
+int arg;
+char path[1000];
 
-static int new_file(const char *filename) {
+#define HEADER_COMMAND 0
+#define TARGET_COMMAND 1
+
+static int process_args(int argc, char **argv);
+
+static int set_target_file(char **buf);
+static int set_header_name(char **buf);
+static int process_files(int argc, char **buf);
+
+static int write_folder(const char *path);
+static int write_file(const char *filename);
+static int write_header(void);
+
+static struct {
+    char *name;
+    int(*function)(char **buf);
+} commands[] = {
+    { "-n", set_header_name },
+    { "-t", set_target_file },
+};
+
+
+
+int main(int argc, char **argv) {
+    fp = stdout;
+    return process_args(argc, argv);
+#if 0
+#ifdef _WIN32
+    fopen_s(&fp, "poti.h", "w");
+#else
+    fp = fopen("poti.h", "w");
+#endif
+#endif
+#if 0
+    fprintf(fp, "#ifndef POTI_H\n");
+    fprintf(fp, "#define POTI_H\n");
+    fprintf(fp, "\n");
+    new_file("font.ttf");
+    new_file("boot.lua");
+    fprintf(fp, "\n");
+    fprintf(fp, "#endif\n");
+    fclose(fp);
+#endif
+}
+
+int process_args(int argc, char **argv) {
+    if (argc < 2) {
+        fprintf(stdout, "usage: ./gen [-n header_name -t target_file] file1.txt file2.bin ...\n");
+        return 1;
+    }
+    arg = 1;
+    while (arg < argc) {
+        char *c = argv[arg];
+        if (*c == '-') {
+            switch (c[1]) {
+                case 'n': commands[HEADER_COMMAND].function(argv); break;
+                case 't': commands[TARGET_COMMAND].function(argv); break;
+                default: break;
+            }
+        } else {
+            process_files(argc, argv);
+        }
+        arg++;
+    }
+
+    return 0;
+}
+
+int set_target_file(char **buf) {
+    arg++;
+    char *filename = buf[arg];
+    FILE *f = fopen(filename, "w");
+    if (f == NULL) {
+        fprintf(stderr, "Failed to create target file: %s\n", filename);
+        exit(EXIT_FAILURE);
+    }
+    fp = f;
+    return 1;
+}
+
+int set_header_name(char **buf) {
+    arg++;
+    char *name = buf[arg];
+    sprintf(header_name, "%s", name);
+    return 1;
+}
+
+int process_files(int argc, char **buf) {
+    fprintf(fp, "#ifndef %s\n", header_name);
+    fprintf(fp, "#define %s\n", header_name);
+    fprintf(fp, "\n");
+    char *f = buf[arg];
+    if (*f == '-') arg++;
+    f = buf[arg];
+    while (arg < argc) {
+        write_file(buf[arg]);
+        arg++;
+    }
+
+    fprintf(fp, "\n");
+    fprintf(fp, "#endif /* %s */\n", header_name);
+    return 1;
+}
+
+int write_file(const char *filename) {
     int filename_len = strlen(filename);
     char var_name[filename_len + 1];
     memcpy(var_name, filename, filename_len);
@@ -40,50 +151,6 @@ static int new_file(const char *filename) {
     return 1;
 }
 
-int main(int argc, char **argv) {
-#ifdef _WIN32
-    fopen_s(&fp, "poti.h", "w");
-#else
-    fp = fopen("poti.h", "w");
-#endif
+int write_header(void) {
 
-    fprintf(fp, "#ifndef POTI_H\n");
-    fprintf(fp, "#define POTI_H\n");
-    fprintf(fp, "\n");
-    new_file("font.ttf");
-    new_file("boot.lua");
-    fprintf(fp, "\n");
-    fprintf(fp, "#endif\n");
-    fclose(fp);
-
-    // fopen_s(&fp, "5x5.ttf", "rb");
-    // fseek(fp, 0, SEEK_END);
-    // long size = ftell(fp);
-    // fseek(fp, 0, SEEK_SET);
-
-    // char *buffer = (char *)malloc(size);
-    // fread(buffer, size, 1, fp);
-    // fclose(fp);
-
-    
-    // //fprintf(fp, "struct { unsigned char *data; long size; } font_5x5_ttf = { .data = {");
-    // fprintf(fp, "unsigned char font_5x5_ttf[] = {");
-    // long bytes_remaining = size;
-    // unsigned char *p = buffer;
-    // while (bytes_remaining)
-    // {
-    //     fprintf(fp, "%d", *p);
-    //     p++;
-    //     bytes_remaining--;
-    //     if (bytes_remaining)
-    //         fprintf(fp, ", ");
-    //     if (bytes_remaining % 32 == 0)
-    //         fprintf(fp, "\n");
-    // }
-    // fprintf(fp, "};\n");
-    // fprintf(fp, "long font_5x5_ttf_size = %ld;\n", size);
-    // fclose(fp);
-    // free(buffer);
-
-    return 0;
 }
