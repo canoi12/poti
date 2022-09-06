@@ -12,7 +12,11 @@
 #define AUDIO_STREAM 0
 #define AUDIO_STATIC 1
 
-static const i8 lr_audio_data;
+#ifndef ma_countof
+#define ma_countof(x)               (sizeof(x) / sizeof(x[0]))
+#endif
+
+const i8 lr_audio_data;
 
 typedef struct Audio Audio;
 typedef struct AudioBuffer AudioBuffer;
@@ -20,33 +24,33 @@ typedef struct AudioData AudioData;
 
 struct AudioData {
     u8 usage;
-	u32 size;
-	u8* data;
+    u32 size;
+    u8* data;
 };
 
 struct AudioBuffer {
-	u8 *data;
-	u16 id;
-	ma_decoder decoder;
-	f32 volume, pitch;
-	u8 playing;
-	u8 loop, loaded;
-	i64 offset;
-	u8 usage;
-	u32 size;
+    u8 *data;
+    u16 id;
+    ma_decoder decoder;
+    f32 volume, pitch;
+    u8 playing;
+    u8 loop, loaded;
+    i64 offset;
+    u8 usage;
+    u32 size;
 };
 
 struct Audio {
-	AudioData data;
+    AudioData data;
 };
 
 struct AudioSystem {
-	ma_context ctx;
-	ma_device device;
-	ma_mutex lock;
+    ma_context ctx;
+    ma_device device;
+    ma_mutex lock;
 
-	u8 is_ready;
-	AudioBuffer buffers[MAX_AUDIO_BUFFER_CHANNELS];
+    u8 is_ready;
+    AudioBuffer buffers[MAX_AUDIO_BUFFER_CHANNELS];
 };
 
 static struct AudioSystem _audio;
@@ -61,7 +65,7 @@ static int s_register_audio_data(lua_State* L, u8 usage, const char *path) {
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
         size_t size;
-        void *data = POTI()->read_file(path, &size);
+	void* data = poti_fs_read_file(path, &size);
         if (!data) {
             lua_pushstring(L, "failed to load audio: ");
             lua_pushstring(L, path);
@@ -123,7 +127,7 @@ static int l_poti_new_audio(lua_State* L) {
 	lua_pop(L, 1);
 	Audio* audio = lua_newuserdata(L, sizeof(*audio));
 	luaL_setmetatable(L, AUDIO_META);
-	memset(&(audio->data), &a_data, sizeof(AudioData));
+	memcpy(&(audio->data), &a_data, sizeof(AudioData));
 	return 1;
 }
 
@@ -132,7 +136,7 @@ static int l_poti_audio_volume(lua_State* L) {
 }
 
 static int l_poti_audio__play(lua_State* L) {
-	Audio* audio = luaL_chekcudata(L, 1, AUDIO_META);
+	Audio* audio = luaL_checkudata(L, 1, AUDIO_META);
 	i32 i;
 	for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
 		if (_audio.buffers[i].loaded) break;

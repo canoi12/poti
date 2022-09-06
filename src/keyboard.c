@@ -2,6 +2,15 @@
 #if !defined(POTI_NO_KEYBOARD) && !defined(POTI_NO_INPUT)
 
 static const Uint8* keys;
+extern SDL_Window* _window;
+
+static int l_poti_keyboard_init(lua_State* L) {
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_context_reg);
+    lua_getfield(L, -1, "window");
+    _window = (SDL_Window*)lua_touserdata(L, -1);
+    lua_pop(L, 2);
+    return 0;
+}
 
 static int l_poti_keyboard_down(lua_State* L) {
     const char *key = luaL_checkstring(L, 1);
@@ -27,7 +36,7 @@ static int l_poti_keyboard_has_screen_support(lua_State* L) {
 }
 
 static int l_poti_keyboard_is_screen_shown(lua_State* L) {
-    lua_pushboolean(L, SDL_IsScreenKeyboardShown(POTI()->window));
+    lua_pushboolean(L, SDL_IsScreenKeyboardShown(_window));
     return 1;
 }
 

@@ -38,7 +38,7 @@ int luaopen_timer(lua_State* L) {
     memset(&timer, 0, sizeof(struct Timer));
     luaL_Reg reg[] = {
         {"delta", l_poti_timer_delta},
-        {"ticks", l_poti_timer_ticks},
+        {"tick", l_poti_timer_ticks},
         {"delay", l_poti_timer_delay},
         {"performance_counter", l_poti_timer_performance_counter},
         {"performance_freq", l_poti_timer_performance_freq},

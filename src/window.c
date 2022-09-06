@@ -1,14 +1,61 @@
 #include "poti.h"
 #if !defined(POTI_NO_WINDOW)
 
+extern SDL_Window* _window;
+
+int poti_init_window(lua_State* L) {
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_config_reg);
+#if 1
+    lua_getfield(L, -1, "window");
+    lua_getfield(L, -1, "title");
+    const i8* title = luaL_checkstring(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "width");
+    i32 width = luaL_checkinteger(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "height");
+    i32 height = luaL_checkinteger(L, -1);
+    i32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "resizable");
+    if (lua_toboolean(L, -1)) window_flags |= SDL_WINDOW_RESIZABLE;
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "fullscreen");
+    if (lua_toboolean(L, -1)) window_flags |= SDL_WINDOW_FULLSCREEN;
+    lua_pop(L, 1);
+#else
+    const char* title = "poti "POTI_VER;
+    i32 width, height;
+    width = 640;
+    height = 380;
+    i32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
+#endif
+    _window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, window_flags);
+    // register window in context
+    /*lua_rawgetp(L, LUA_REGISTRYINDEX, &l_context_reg);
+    lua_pushlightuserdata(L, _window);
+    lua_setfield(L, -2, "window");*/
+
+    lua_pushlightuserdata(L, _window);
+    return 1;
+}
+
+static int l_poti_window_init(lua_State* L) {
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_context_reg);
+    lua_getfield(L, -2, "window");
+    _window = (SDL_Window*)lua_touserdata(L, -1);
+    lua_pop(L, 2);
+    return 0;
+}
+
 static int l_poti_window_title(lua_State* L) {
     const i8* title = NULL;
     if (!lua_isnil(L, 1)) {
         title = luaL_checkstring(L, 1);
-        SDL_SetWindowTitle(POTI()->window, title);
+        SDL_SetWindowTitle(_window, title);
     }
 
-    lua_pushstring(L, SDL_GetWindowTitle(POTI()->window));
+    lua_pushstring(L, SDL_GetWindowTitle(_window));
     return 1;
 }
 
@@ -17,10 +64,10 @@ static int l_poti_window_width(lua_State* L) {
     if (!lua_isnil(L, 1)) {
         i32 height;
         width = luaL_checkinteger(L, 1);
-        SDL_GetWindowSize(POTI()->window, NULL, &height);
-        SDL_SetWindowSize(POTI()->window, width, height);
+        SDL_GetWindowSize(_window, NULL, &height);
+        SDL_SetWindowSize(_window, width, height);
     }
-    else SDL_GetWindowSize(POTI()->window, &width, NULL);
+    else SDL_GetWindowSize(_window, &width, NULL);
 
     lua_pushinteger(L, width);
     return 1;
@@ -31,10 +78,10 @@ static int l_poti_window_height(lua_State *L) {
     if (!lua_isnil(L, 1)) {
         int width;
         height = luaL_checkinteger(L, 1);
-        SDL_GetWindowSize(POTI()->window, &width, NULL);
-        SDL_SetWindowSize(POTI()->window, width, height);
+        SDL_GetWindowSize(_window, &width, NULL);
+        SDL_SetWindowSize(_window, width, height);
     }
-    else SDL_GetWindowSize(POTI()->window, NULL, &height);
+    else SDL_GetWindowSize(_window, NULL, &height);
 
     lua_pushinteger(L, height);
     return 1;
@@ -43,7 +90,7 @@ static int l_poti_window_height(lua_State *L) {
 static int l_poti_window_size(lua_State *L) {
     int size[2];
 
-    if (lua_gettop(L) <= 0) SDL_GetWindowSize(POTI()->window, &size[0], &size[1]);
+    if (lua_gettop(L) <= 0) SDL_GetWindowSize(_window, &size[0], &size[1]);
 
     for (int i = 0; i < lua_gettop(L); i++) {
         size[i] = luaL_checkinteger(L, i+1);
@@ -58,14 +105,14 @@ static int l_poti_window_size(lua_State *L) {
 static int l_poti_window_position(lua_State *L) {
     int pos[2];
 
-    SDL_GetWindowPosition(POTI()->window, &pos[0], &pos[1]);
+    SDL_GetWindowPosition(_window, &pos[0], &pos[1]);
     int top = lua_gettop(L);
     
     if (top > 0) {
         for (int i = 0; i < top; i++) {
             pos[i] = luaL_checkinteger(L, i+1);
         }
-        SDL_SetWindowPosition(POTI()->window, pos[0], pos[1]);
+        SDL_SetWindowPosition(_window, pos[0], pos[1]);
     }
 
     lua_pushinteger(L, pos[0]);
@@ -75,13 +122,13 @@ static int l_poti_window_position(lua_State *L) {
 
 static int l_poti_window_resizable(lua_State *L) {
     int resizable = 0;
-    Uint32 flags = SDL_GetWindowFlags(POTI()->window);
+    Uint32 flags = SDL_GetWindowFlags(_window);
 
     resizable = flags & SDL_WINDOW_RESIZABLE;
 
     if (!lua_isnil(L, 1)) {
         resizable = lua_toboolean(L, 1);
-        SDL_SetWindowResizable(POTI()->window, resizable);
+        SDL_SetWindowResizable(_window, resizable);
     }
 
     lua_pushboolean(L, resizable);
@@ -91,13 +138,13 @@ static int l_poti_window_resizable(lua_State *L) {
 
 static int l_poti_window_bordered(lua_State *L) {
     int bordered = 0;
-    Uint32 flags = SDL_GetWindowFlags(POTI()->window);
+    Uint32 flags = SDL_GetWindowFlags(_window);
 
     bordered = ~flags & SDL_WINDOW_BORDERLESS;
 
     if (!lua_isnil(L, 1)) {
         bordered = lua_toboolean(L, 1);
-        SDL_SetWindowBordered(POTI()->window, bordered);
+        SDL_SetWindowBordered(_window, bordered);
     }
 
     lua_pushboolean(L, bordered);
@@ -108,7 +155,7 @@ static int l_poti_window_border_size(lua_State *L) {
 
     int borders[4];
 
-    SDL_GetWindowBordersSize(POTI()->window, &borders[0], &borders[1], &borders[2], &borders[3]);
+    SDL_GetWindowBordersSize(_window, &borders[0], &borders[1], &borders[2], &borders[3]);
 
     for (int i = 0; i < 4; i++) lua_pushinteger(L, borders[i]);
 
@@ -116,17 +163,17 @@ static int l_poti_window_border_size(lua_State *L) {
 }
 
 static int l_poti_window_maximize(lua_State *L) {
-    SDL_MaximizeWindow(POTI()->window);
+    SDL_MaximizeWindow(_window);
     return 0;
 }
 
 static int l_poti_window_minimize(lua_State *L) {
-    SDL_MinimizeWindow(POTI()->window);
+    SDL_MinimizeWindow(_window);
     return 0;
 }
 
 static int l_poti_window_restore(lua_State *L) {
-    SDL_RestoreWindow(POTI()->window);
+    SDL_RestoreWindow(_window);
     return 0;
 }
 
@@ -151,7 +198,7 @@ static int l_poti_window_simple_message_box(lua_State *L) {
             break;
         }
     }
-    SDL_ShowSimpleMessageBox(flags, title, message, POTI()->window);
+    SDL_ShowSimpleMessageBox(flags, title, message, _window);
 
     return 0;
 }

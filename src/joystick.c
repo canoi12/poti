@@ -154,7 +154,7 @@ static int l_poti_joystick__gc(lua_State* L) {
     return 0;
 }
 
-static int luaopen_joystick(lua_State *L) {
+int luaopen_joystick(lua_State *L) {
     luaL_Reg reg[] = {
         {"open", l_poti_joystick},
         {"num", l_poti_num_joysticks},

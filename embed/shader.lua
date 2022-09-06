@@ -78,16 +78,16 @@ local function _setup_attributes(glsl)
 end
 
 local function _setup_varying(glsl)
-    local v_format = 'varying %s %s;'
-    local f_format = 'varying %s %s;'
+    local out_format = 'varying %s %s;'
+    local in_format = 'varying %s %s;'
     if glsl >= 130 then
-        v_format = 'out %s %s;'
-        f_format = 'in %s %s;'
+        out_format = 'out %s %s;'
+        in_format = 'in %s %s;'
     end
 
     for i,v in ipairs(info.varying) do
-        vert_top = vert_top .. string.format(v_format, v[1], v[2]) .. '\n'
-        frag_top = frag_top .. string.format(f_format, v[1], v[2]) .. '\n'
+        vert_top = vert_top .. string.format(out_format, v[1], v[2]) .. '\n'
+        frag_top = frag_top .. string.format(in_format, v[1], v[2]) .. '\n'
     end
 end
 
