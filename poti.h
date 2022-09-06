@@ -113,8 +113,7 @@ int poti_fs_write_file(const i8* filename, i32 size);
 #if !defined(POTI_NO_GRAPHICS) && !defined(POTI_NO_WINDOW)
 int luaopen_graphics(lua_State* L);
 int poti_init_graphics(lua_State* L);
-int poti_graphics_begin(lua_State* L);
-int poti_graphics_end(lua_State* L);
+int poti_deinit_graphics(lua_State* L);
 #endif
 
 #if !defined(POTI_NO_INPUT)
@@ -124,6 +123,7 @@ int poti_graphics_end(lua_State* L);
     #endif
     #if !defined(POTI_NO_KEYBOARD)
     int luaopen_keyboard(lua_State* L);
+    int poti_init_keyboard(lua_State* L);
     #endif
     #if !defined(POTI_NO_MOUSE)
     int luaopen_mouse(lua_State* L);
@@ -136,7 +136,7 @@ int luaopen_timer(lua_State *L);
 #if !defined(POTI_NO_WINDOW)
 int luaopen_window(lua_State* L);
 int poti_init_window(lua_State* L);
-Window* poti_window_get(void);
+int poti_deinit_window(lua_State* L);
 #endif
 
 #if defined(__cplusplus)

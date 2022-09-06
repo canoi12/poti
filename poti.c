@@ -181,6 +181,14 @@ int poti_init(int argc, char** argv) {
     #endif
 #endif
 
+#if !defined(POTI_NO_AUDIO)
+    lua_pushcfunction(L, poti_init_audio);
+    if (lua_pcall(L, 0, 0, 0) != 0) {
+	fprintf(stderr, "Failed to init audio: %s\n", lua_tostring(L, -1));
+	exit(EXIT_FAILURE);
+    }
+#endif
+
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_step_reg);
     i32 err = lua_pcall(L, 0, 1, 0);
     if (err != 0) {
@@ -217,6 +225,16 @@ int poti_quit(void) {
 #if !defined(POTI_NO_GRAPHICS)
     SDL_GL_DeleteContext(_gl_ctx);
 #endif
+#endif
+#if !defined(POTI_NO_AUDIO)
+    lua_State* L = _L;
+    lua_pushcfunction(L, poti_deinit_audio);
+    if (lua_pcall(L, 0, 0, 0) != 0) {
+	const i8* str = lua_tostring(L, -1);
+	fprintf(stderr, "Failed to deinit audio: %s\n", str);
+	exit(EXIT_FAILURE);
+    }
+
 #endif
     SDL_Quit();
     return 0;
