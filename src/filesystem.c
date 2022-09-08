@@ -3,6 +3,7 @@
 #if !defined(POTI_NO_FILESYSTEM)
 
 char _basepath[1024] = "./";
+extern lua_State* _L;
 
 int poti_init_filesystem(lua_State* L) {
     const i8* basepath = luaL_checkstring(L, 1);
@@ -22,15 +23,48 @@ int poti_init_filesystem(lua_State* L) {
     return 0;
 }
 
-const i8* poti_fs_read_file(const i8* filename, i32* out_size) {
-    return 0;
+static void set_basepath(const char* path) {
+    i32 len = strlen(path);
+    strcpy(_basepath, path);
+    i8* c = &(_basepath[len-2]);
+    if (*c != '\\' || *c != '/') {
+	c++;
+	c[0] = '/';
+	c[1] = '\0';
+    }
+}
+
+const i8* poti_fs_read_file(const i8* filename, size_t* out_size) {
+#if 1
+    lua_State* L = _L;
+    lua_pushstring(L, _basepath);
+    lua_pushstring(L, filename);
+    lua_concat(L, 2);
+    i8* data = NULL;
+    const i8* res_path = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    FILE* fp = fopen(res_path, "rb");
+    if (!fp) return data;
+    size_t size = 0;
+    fseek(fp, 0, SEEK_END);
+    size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    data = malloc(size);
+    fread(data, 1, size, fp);
+    fclose(fp);
+    if (out_size) *out_size = size;
+#endif
+    return data;
 }
 
 static int l_poti_filesystem_init(lua_State* L) {
+    const i8* path = luaL_checkstring(L, 1);
+    set_basepath(path);
+#if 0
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_context_reg);
-    lua_getfield(L, -1, "basepath");
-    strcpy(_basepath, lua_tostring(L, -1));
-    lua_pop(L, 2);
+    lua_setfield(L, -1, "basepath");
+    lua_pop(L, 1);
+#endif
     return 0;
 }
 
@@ -40,7 +74,8 @@ static int l_poti_filesystem_basepath(lua_State* L) {
 }
 
 static int l_poti_filesystem_set_basepath(lua_State* L) {
-    strcpy(_basepath, luaL_checkstring(L, 1));
+    const i8* path = luaL_checkstring(L, 1);
+    set_basepath(path);
     return 0;
 }
 
@@ -53,6 +88,16 @@ static int l_poti_filesystem_exists(lua_State* L) {
     return 1;
 }
 
+static int l_poti_filesystem_read(lua_State* L) {
+    const i8* path = luaL_checkstring(L, 1);
+    size_t out_size;
+    i8* data = (i8*)poti_fs_read_file(path, &out_size);
+    lua_pushstring(L, (const i8*)data);
+    lua_pushinteger(L, out_size);
+    free(data);
+    return 2;
+}
+
 int luaopen_filesystem(lua_State* L) {
     luaL_Reg reg[] = {
 	{"init", l_poti_filesystem_init},
@@ -60,7 +105,7 @@ int luaopen_filesystem(lua_State* L) {
 	{"set_basepath", l_poti_filesystem_set_basepath},
 	{"resolve", NULL},
 	{"exists", l_poti_filesystem_exists},
-	{"read", NULL},
+	{"read", l_poti_filesystem_read},
 	{"write", NULL},
 	{"mkdir", NULL},
 	{"rmdir", NULL},

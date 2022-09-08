@@ -4,6 +4,8 @@ CC = cc
 AR = ar
 CLEAR_FILES =
 
+RELEASE = 0
+
 USEJIT = 0
 
 LUA_DIR = external/lua/src
@@ -24,30 +26,35 @@ SRC = poti.c impl.c $(LUA_SRC)
 SRC += $(wildcard src/*.c)
 INCL = -I. -Iexternal/ -I$(LUA_DIR) -I$(GLAD_DIR)/include
 EXE = .bin
+CFLAGS = 
+ifeq ($(RELEASE), 1)
+	CFLAGS += -O2
+endif
+
 
 ifeq ($(TARGET), Windows)
 	CC := gcc
 	EXE := .exe
 	PREFIX := x86_64-w64-mingw32-
 	GEN_CC := $(PREFIX)gcc
-	CFLAGS = -Wall -std=c99
+	CFLAGS += -Wall -std=c99
 	INCL += -Iexternal/SDL2/include
 	LFLAGS = -mwindows -lpthread -lmingw32 -Lexternal/SDL2/lib -lSDL2 -lopengl32
 else
 	ifeq ($(TARGET), Web)
 		CC := emcc
-		CFLAGS = -Wall -std=gnu99 -sALLOW_MEMORY_GROWTH -sFORCE_FILESYSTEM -s WASM=1 -s USE_SDL=2
+		CFLAGS += -Wall -std=gnu99 -sALLOW_MEMORY_GROWTH -sFORCE_FILESYSTEM -s WASM=1 -s USE_SDL=2
 		GEN_CFLAGS = -Wall -std=gnu99
 		LFLAGS = -lm -ldl
 		EXE := .html
 		CLEAR_FILES = *.wasm *.js
 		GEN_CC := cc
 	else
-		CFLAGS = -Wall -std=c99 `sdl2-config --cflags`
+		CFLAGS += -Wall -std=c99 `sdl2-config --cflags`
 		LFLAGS = -lm -lpthread -lSDL2 -ldl `sdl2-config --libs` -lGL
 	endif
 endif
-CDEFS =
+CDEFS = #-DDEBUG_EMBED_LUA
 
 OUT = $(NAME)$(EXE)
 GEN = gen$(EXE)

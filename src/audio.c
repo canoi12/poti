@@ -64,11 +64,10 @@ struct AudioSystem {
 
 static struct AudioSystem _audio;
 
-static int s_register_audio_data(lua_State* L, u8 usage, const char* path);
-static void s_audio_callback(ma_device *device, void *output, const void *input, ma_uint32 frameCount);
+static inline void s_audio_callback(ma_device *device, void *output, const void *input, ma_uint32 frameCount);
 
 
-int poti_init_audio(lua_State* L) {
+static int l_poti_audio_init(lua_State* L) {
     if (luaL_dostring(L, audio_bank) != LUA_OK) {
 	fprintf(stderr, "Failed to load audio bank function: %s\n", lua_tostring(L, -1));
 	exit(EXIT_FAILURE);
@@ -128,7 +127,7 @@ int poti_init_audio(lua_State* L) {
     return 0;
 }
 
-int poti_deinit_audio(lua_State* L) {
+static int l_poti_audio_deinit(lua_State* L) {
     if (_audio.is_ready) {
 	ma_mutex_uninit(&(_audio.lock));
 	ma_device_uninit(&(_audio.device));
@@ -138,7 +137,7 @@ int poti_deinit_audio(lua_State* L) {
     return 0;
 }
 
-static int l_poti_load_audio(lua_State* L) {
+static int l_poti_audio_load_audio(lua_State* L) {
 #if !defined(POTI_NO_FILESYSTEM)
 	const char *path = luaL_checkstring(L, 1);
 	FILE* fp = fopen(path, "rb");
@@ -308,12 +307,14 @@ int luaopen_audio(lua_State* L) {
         {NULL, NULL}
     };
 #endif
-	luaL_Reg reg[] = {
-		{"load_audio", NULL},
-		{"volume", NULL},
-		{"play", l_poti_audio_play},
-		{NULL, NULL}
-	};
+    luaL_Reg reg[] = {
+	{"init", l_poti_audio_init},
+	{"deinit", l_poti_audio_deinit},
+	{"load_audio", l_poti_audio_load_audio},
+	{"volume", NULL},
+	{"play", l_poti_audio_play},
+	{NULL, NULL}
+    };
 
     luaL_newlib(L, reg);
     return 1;

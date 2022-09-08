@@ -27,7 +27,9 @@
 
 #define POTI_VER "0.1.0"
 
+#ifndef M_PI
 #define M_PI 3.14159
+#endif
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define CLAMP(v, a, b) (MAX(a, MIN(v, b)))
@@ -98,22 +100,17 @@ int luaopen_poti(lua_State* L);
 #if !defined(POTI_NO_AUDIO)
 extern const i8 lr_audio_data;
 int luaopen_audio(lua_State* L);
-int poti_init_audio(lua_State* L);
-int poti_deinit_audio(lua_State* L);
 #endif
 #if !defined(POTI_NO_EVENT)
 int luaopen_event(lua_State* L);
 #endif
 #if !defined(POTI_NO_FILESYSTEM)
 int luaopen_filesystem(lua_State* L);
-int poti_init_filesystem(lua_State* L);
-const i8* poti_fs_read_file(const i8* filename, i32* out_size);
+const i8* poti_fs_read_file(const i8* filename, size_t* out_size);
 int poti_fs_write_file(const i8* filename, i32 size);
 #endif
 #if !defined(POTI_NO_GRAPHICS) && !defined(POTI_NO_WINDOW)
 int luaopen_graphics(lua_State* L);
-int poti_init_graphics(lua_State* L);
-int poti_deinit_graphics(lua_State* L);
 #endif
 
 #if !defined(POTI_NO_INPUT)
@@ -135,8 +132,6 @@ int luaopen_timer(lua_State *L);
 #endif
 #if !defined(POTI_NO_WINDOW)
 int luaopen_window(lua_State* L);
-int poti_init_window(lua_State* L);
-int poti_deinit_window(lua_State* L);
 #endif
 
 #if defined(__cplusplus)

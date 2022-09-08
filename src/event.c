@@ -414,7 +414,6 @@ static int l_poti_event_poll(lua_State* L) {
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_event_reg);
     while (SDL_PollEvent(&_event)) {
 	lua_rawgeti(L, -1, _event.type);
-	int args = 1;
 	if (!lua_isnil(L, -1)) {
 	    lua_CFunction func = lua_tocfunction(L, -1);
 	    lua_pop(L, 1);
@@ -423,7 +422,7 @@ static int l_poti_event_poll(lua_State* L) {
 	    lua_rawseti(L, poll_top, index);
 	    index++;
 	    i32 top = lua_gettop(L);
-	    args = func(L);
+	    i32 args = func(L);
 	    // fprintf(stderr, "Teste(%d): %s %d\n", _event.type, lua_tostring(L, top+1), args);
 	    for (i32 i = 0; i < args; i++) {
 		lua_rawseti(L, top, i+1);

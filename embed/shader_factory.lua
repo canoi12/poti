@@ -45,6 +45,7 @@ void main() {
 ]]
 
 local frag_main = [[
+
 void main() {
     o_FragColor = pixel(v_Color, v_TexCoord, u_Texture);
 }
@@ -114,16 +115,16 @@ local function _setup(glsl, es)
         defines = "out vec4 o_FragColor;\n"
     end
     frag_top = frag_top .. defines
+    print(glsl, es)
+    return function(vert, frag)
+	vert = vert or position
+	frag = frag or pixel
+
+	local vert_src = string.format("%s\n%s\n%s", vert_top, vert, vert_main)
+	local frag_src = string.format("%s\n%s\n%s", frag_top, frag, frag_main)
+
+	return frag_src, vert_src
+    end
 end
 
-local gl = poti.gl()
-_setup(gl.glsl, gl.es)
-return function(vert, frag)
-    vert = vert or position
-    frag = frag or pixel
-
-    local vert_src = string.format("%s\n%s\n%s", vert_top, vert, vert_main)
-    local frag_src = string.format("%s\n%s\n%s", frag_top, frag, frag_main)
-
-    return vert_src, frag_src
-end
+return _setup

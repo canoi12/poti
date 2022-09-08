@@ -1,11 +1,7 @@
 local traceback = debug.traceback
-local path = poti.filesystem.basepath()
-package.path = path .. '/?.lua;' .. path .. '/?/init.lua;' .. package.path 
-
--- config
 local config = {
     window = {
-	title = 'poti ' .. poti.version(),
+	title = "poti " .. poti.version(),
 	width = 640,
 	height = 380,
 	resizable = false,
@@ -14,19 +10,39 @@ local config = {
     gl = {
 	major = 3,
 	minor = 0,
-	es = false,
-	z_buffer = false
+	es = false
     }
 }
-function poti.conf(t)
+
+local timer = {
+    delta = 0,
+    last = 0
+}
+
+function poti.config(t)
 end
 
-local function _conf()
-    poti.conf(config)
-    return config
+function poti.quit()
+    return true
 end
--- error handling
-function poti.error(msg, trace)
+
+local _error_step = function()
+    for ev,a,b,c,d,e,f,g in poti.event.poll() do
+	if ev == 'quit' or ev == 'key_pressed' then
+	    poti.running(false)
+	end
+    end
+    poti.graphics.clear_buffer()
+    poti.graphics.bind_buffer()
+    if poti.update then poti.update() end
+    if poti.draw then poti.draw() end
+    poti.graphics.draw_buffer()
+    poti.graphics.swap()
+end
+
+local _error = function(msg)
+    local trace = traceback('', 1)
+    print(msg, trace)
     poti.update = function() end
     poti.draw = function()
         poti.graphics.set_color(255, 255, 255)
@@ -35,66 +51,72 @@ function poti.error(msg, trace)
         poti.graphics.print(msg, 16, 16)
         poti.graphics.print(trace, 16, 32)
     end
-end
-local function _err(msg)
-    local trace = traceback('', 1)
-    print(msg, trace)
-    poti.error(msg, trace)
+    poti.set_func('step', _error_step)
 end
 
--- main loop
-local delta = 0
-local last = 0
-local function _mainLoop()
-    -- event
-    for name,a,b,c,d,e,f in poti.event.poll() do
-	if name == 'quit' then
-	    poti.running(not poti.quit())
-	elseif poti[name] then
-	    poti[name](a,b,c,d,e,f)
-	end
-    end
-    -- timer
-    if poti.timer then
-	local tick = poti.timer.tick()
-	delta = (tick - last) / 1000
-	last = tick
-    end
-    -- update
-    if poti.update then poti.update(delta) end
-    -- graphics
-    --[[ poti.graphics.matrix('perspective')
-     poti.graphics.identity()
-    local ww, hh = poti.window.get_size()
-    poti.graphics.ortho(0, ww, hh, 0, 0, 1)
-    poti.graphics.matrix('modelview')
-    poti.graphics.identity()
-
-    poti.graphics.set_target()
-    poti.graphics.set_shader()]]
-    -- draw
-    if poti.draw then poti.draw() end
-    -- poti.graphics.draw()
-end
-local _step = _mainLoop
-function poti.run()
-    delta = 0
-    if poti.timer then
-	last = poti.timer.tick()
-    end
+function poti.boot()
+    timer.delta = 0
     if poti.load then poti.load(poti.args) end
-    return _mainLoop
+    return function()
+	for ev,a,b,c,d,e,f,g in poti.event.poll() do
+	    if ev == 'quit' then
+		poti.running(not poti.quit())
+	    else
+		if poti[ev] then poti[ev](a,b,c,d,e,f,g) end
+	    end
+	end
+	local current = poti.timer.tick()	
+	timer.delta = (current - timer.last) / 1000
+	timer.last = current
+	if poti.update then poti.update(timer.delta) end
+	poti.graphics.identity()
+	poti.graphics.set_target()
+	poti.graphics.set_shader()
+	poti.graphics.clear_buffer()
+	poti.graphics.bind_buffer()
+	if poti.draw then poti.draw() end
+	poti.graphics.draw_buffer()
+	poti.graphics.swap()
+    end
 end
-local function _setup()
-    local state, ret = xpcall(poti.run, _err)
-    if ret then _step = ret end
-    return function() xpcall(_step, _err) end
-end
-function poti.quit()
-    return true
-end
-if poti.filesystem.exists('main.lua') then
-    xpcall(function() require 'main' end, _err)
-end
-return _err, _conf, _setup
 
+function _init()
+    local args = poti.args
+    local basepath = "./"
+    if #args > 1 then
+	basepath = args[2]
+    end
+    poti.filesystem.init(basepath)
+    local path = poti.filesystem.basepath()
+    package.path = path .. '?.lua;' .. path .. '?/init.lua;' .. package.path
+    table.insert(package.searchers, function(libname)
+	local path = poti.filesystem.basepath() .. libname:gsub("%.", "/") .. ".lua"
+	return poti.filesystem.read(path);
+    end)
+    if poti.filesystem.exists('conf.lua') then
+	xpcall(function() require('conf') end, _error)
+    end
+    poti.config(config)
+    local window = poti.window.init(config)
+    local ctx = poti.graphics.init(config, window)
+    poti.audio.init()
+
+    if poti.filesystem.exists('main.lua') then
+	xpcall(function() require('main') end, _error)
+    end
+
+    local state, _step = xpcall(poti.boot, _error)
+    if state then
+	if not _step then _error('poti.boot must return a function')
+	else poti.set_func('step', function() xpcall(_step, _error) end) end
+    end
+    return ctx, window
+end
+
+function _deinit()
+    poti.graphics.deinit()
+    poti.window.deinit()
+    poti.audio.deinit()
+end
+
+return _deinit, _init, _error

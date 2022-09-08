@@ -3846,7 +3846,7 @@ static u8* s_utf8_codepoint(u8* p, i32* codepoint) {
     return n;
     }
 
-    static i32 s_init_font(Font* font, const void* data, size_t buf_size, i32 font_size) {
+static i32 s_init_font(Font* font, const void* data, size_t buf_size, i32 font_size) {
     if (buf_size <= 0) return 0;
     font->data = malloc(buf_size);
     if (!font->data) {

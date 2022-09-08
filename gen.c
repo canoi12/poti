@@ -145,6 +145,10 @@ int write_file(const char *filename) {
             fprintf(fp, "\n");
         bytes_remaining--;
     }
+    if (strstr(filename, ".lua")) {
+	fprintf(fp, ", 0");
+	size++;
+    }
     fprintf(fp, "\n};\n");
     fprintf(fp, "const long _%s_size = %ld;\n", var_name, size);
     fclose(f);

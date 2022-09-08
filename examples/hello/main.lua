@@ -1,7 +1,6 @@
 function poti.load()
     x = 0
     time = 0
-    shader = poti.render.default_shader()
 end
 
 function poti.update(dt)
@@ -10,8 +9,7 @@ function poti.update(dt)
 end
 
 function poti.draw()
-    poti.render.mode("fill")
-    poti.render.clear()
-    poti.render.color(255, 255, 255)
-    poti.render.print("testanDO")
+    poti.graphics.clear()
+    poti.graphics.set_color(255, 255, 255)
+    poti.graphics.print("testanDO")
 end

@@ -3,10 +3,10 @@
 
 extern SDL_Window* _window;
 
-int poti_init_window(lua_State* L) {
-    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_config_reg);
+// int poti_init_window(lua_State* L) {
+int l_poti_window_init(lua_State* L) {
 #if 1
-    lua_getfield(L, -1, "window");
+    lua_getfield(L, 1, "window");
     lua_getfield(L, -1, "title");
     const i8* title = luaL_checkstring(L, -1);
     lua_pop(L, 1);
@@ -15,14 +15,15 @@ int poti_init_window(lua_State* L) {
     lua_pop(L, 1);
     lua_getfield(L, -1, "height");
     i32 height = luaL_checkinteger(L, -1);
-    i32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
     lua_pop(L, 1);
+
+    i32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
     lua_getfield(L, -1, "resizable");
     if (lua_toboolean(L, -1)) window_flags |= SDL_WINDOW_RESIZABLE;
     lua_pop(L, 1);
     lua_getfield(L, -1, "fullscreen");
     if (lua_toboolean(L, -1)) window_flags |= SDL_WINDOW_FULLSCREEN;
-    lua_pop(L, 1);
+    lua_pop(L, 2);
 #else
     const char* title = "poti "POTI_VER;
     i32 width, height;
@@ -40,11 +41,8 @@ int poti_init_window(lua_State* L) {
     return 1;
 }
 
-static int l_poti_window_init(lua_State* L) {
-    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_context_reg);
-    lua_getfield(L, -2, "window");
-    _window = (SDL_Window*)lua_touserdata(L, -1);
-    lua_pop(L, 2);
+static int l_poti_window_deinit(lua_State* L) {
+    SDL_DestroyWindow(_window);
     return 0;
 }
 
@@ -205,6 +203,8 @@ static int l_poti_window_simple_message_box(lua_State *L) {
 
 int luaopen_window(lua_State* L) {
     luaL_Reg reg[] = {
+	{"init", l_poti_window_init},
+	{"deinit", l_poti_window_deinit},
         {"title", l_poti_window_title},
         {"width", l_poti_window_width},
         {"height", l_poti_window_height},
