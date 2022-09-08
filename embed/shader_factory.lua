@@ -100,21 +100,25 @@ local function _setup(glsl, es)
         version = version .. "\n"
     end
 
-    vert_top = version
-    frag_top = version
-    _setup_uniforms()
-    _setup_attributes(glsl)
-    _setup_varying(glsl)
-
+    defines = ""
+    if es then
+	defines = "precision highp float;\n"
+    end
     if glsl < 130 then
-        defines = [[
+        defines = defines .. [[
 #define o_FragColor gl_FragColor
 #define texture texture2D
 ]]
     else
-        defines = "out vec4 o_FragColor;\n"
+        defines = defines .. "out vec4 o_FragColor;\n"
     end
-    frag_top = frag_top .. defines
+
+    vert_top = version
+    frag_top = version .. defines
+    _setup_uniforms()
+    _setup_attributes(glsl)
+    _setup_varying(glsl)
+
     return function(vert, frag)
 	vert = vert or position
 	frag = frag or pixel

@@ -6,9 +6,14 @@
 #include <lauxlib.h>
 
 #if !defined(POTI_NO_WINDOW)
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#endif
 
 #if !defined(POTI_NO_GRAPHICS)
+#if !defined(__EMSCRIPTEN__)
 #include "glad/glad.h"
+#endif
 #endif
 
 #ifdef _WIN32
@@ -21,7 +26,11 @@
 #endif
 #else
 #include <SDL2/SDL.h>
+#if !defined(__EMSCRIPTEN__)
 #include <SDL2/SDL_opengl.h>
+#else
+#include <SDL2/SDL_opengles2.h>
+#endif
 #endif
 #endif
 

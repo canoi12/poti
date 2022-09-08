@@ -168,32 +168,38 @@ static int l_poti_graphics_init(lua_State* L) {
  
     SDL_Window* window = lua_touserdata(L, 2);
     lua_getfield(L, 1, "gl");
+    i32 profile, major, minor;
 #if defined(__EMSCRIPTEN__)
-    i32 profile = SDL_GL_CONTEXT_PROFILE_ES; 
+    profile = SDL_GL_CONTEXT_PROFILE_ES; 
+    major = 2;
+    minor = 0;
 #else
+    profile = SDL_GL_CONTEXT_PROFILE_COMPATIBILITY;
     lua_getfield(L, -1, "es");
-    i32 profile = SDL_GL_CONTEXT_PROFILE_COMPATIBILITY;
     if (!lua_isnil(L, -1) && lua_toboolean(L, -1)) {
 	profile = SDL_GL_CONTEXT_PROFILE_ES;
     }
     lua_pop(L, 1);
-#endif
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, profile);
     lua_getfield(L, -1, "major");
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, luaL_optinteger(L, -1, 3));
+    major = luaL_optinteger(L, -1, 3);
     lua_pop(L, 1);
     lua_getfield(L, -1, "minor");
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, luaL_optinteger(L, -1, 0));
+    minor = luaL_optinteger(L, -1, 0);
     lua_pop(L, 1);
+#endif
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, profile);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, ctx);
-
+#if !defined(__EMSCRIPTEN__)
     if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
 	fprintf(stderr, "failed to initialize OpenGL context\n");
 	exit(EXIT_FAILURE);
     }
+#endif
     lua_pop(L, 1);
-    
+
     const u8 *version = glGetString(GL_VERSION);
     const u8 *glsl = glGetString(GL_SHADING_LANGUAGE_VERSION);
 
@@ -315,6 +321,14 @@ static int l_poti_graphics_init(lua_State* L) {
 static int l_poti_graphics_deinit(lua_State* L) {
     SDL_GL_DeleteContext(_gl_ctx);
     return 0;
+}
+
+static int l_poti_graphics_size(lua_State* L) {
+    i32 view[4];
+    glGetIntegerv(GL_VIEWPORT, view);
+    lua_pushinteger(L, view[2]);
+    lua_pushinteger(L, view[3]);
+    return 2;
 }
 
 /***********************
@@ -770,8 +784,8 @@ static int s_init_texture(Texture *tex, int target, int w, int h, int format, vo
     tex->height = h;
     tex->filter[0] = GL_NEAREST;
     tex->filter[1] = GL_NEAREST;
-    tex->wrap[0] = GL_CLAMP_TO_BORDER;
-    tex->wrap[1] = GL_CLAMP_TO_BORDER;
+    tex->wrap[0] = GL_CLAMP_TO_EDGE;
+    tex->wrap[1] = GL_CLAMP_TO_EDGE;
 
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tex->filter[0]);
@@ -1227,6 +1241,7 @@ int luaopen_graphics(lua_State* L) {
     luaL_Reg reg[] = {
 	{"init", l_poti_graphics_init},
 	{"deinit", l_poti_graphics_deinit},
+	{"size", l_poti_graphics_size},
 	/* texture */
 	{"new_texture", l_poti_graphics_new_texture},
 	{"load_texture", l_poti_graphics_load_texture},
@@ -1295,7 +1310,9 @@ int poti_graphics_end(lua_State* L) {
     glDisable(GL_SCISSOR_TEST);
     draw_vertex(VERTEX());
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+#if !defined(__EMSCRIPTEN__)
     glBindVertexArray(0);
+#endif
     return 0;
 }
 
@@ -1314,9 +1331,11 @@ int l_perspective_func(lua_State* L) {
 }
 
 void init_vertex(Vertex* v, u32 size) {
-    glGenVertexArrays(1, &v->vao);
     glGenBuffers(1, &v->vbo);
+#if !defined(__EMSCRIPTEN__)
+    glGenVertexArrays(1, &v->vao);
     glBindVertexArray(v->vao);
+#endif
     glBindBuffer(GL_ARRAY_BUFFER, v->vbo);
 
     v->offset = 0;
@@ -1333,12 +1352,16 @@ void init_vertex(Vertex* v, u32 size) {
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(f32), (void*)(sizeof(f32) * 2));
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(f32), (void*)(sizeof(f32) * 6));
 
+#if !defined(__EMSCRIPTEN__)
     glBindVertexArray(0);
+#endif
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 void bind_vertex(Vertex* v) {
+#if !defined(__EMSCRIPTEN__)
     glBindVertexArray(v->vao);
+#endif
     glBindBuffer(GL_ARRAY_BUFFER, v->vbo);
 }
 

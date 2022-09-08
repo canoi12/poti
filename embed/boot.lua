@@ -103,6 +103,14 @@ function _init()
 
     if poti.filesystem.exists('main.lua') then
 	xpcall(function() require('main') end, _error)
+    else
+	poti.update = function() end
+	poti.draw = function()
+	    local ww, hh = poti.graphics.size()
+	    poti.graphics.clear()
+	    poti.graphics.set_color(255, 255, 255)
+	    poti.graphics.print("no main.lua found", (ww/2)-64, 182)
+	end
     end
 
     local state, _step = xpcall(poti.boot, _error)

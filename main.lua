@@ -23,7 +23,7 @@ function poti.load(args)
         [[
             uniform vec4 palette[4];
             vec4 pixel(vec4 color, vec2 uv, sampler2D tex) {
-                float dist = 1000000;
+                float dist = 1000000.0;
                 vec4 cc = color * texture(tex, uv);
                 int index = 0;
                 for (int i = 0; i < 4; i++) {
@@ -37,8 +37,7 @@ function poti.load(args)
                         index = i;
                     }
                 }
-
-                vec4 c = palette[index];
+		vec4 c = vec4(palette[index].r, palette[index].g, palette[index].b, palette[index].a);
                 return vec4(c.r, c.g, c.b, cc.a);
             }
         ]]

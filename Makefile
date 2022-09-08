@@ -31,7 +31,7 @@ ifeq ($(RELEASE), 1)
 	CFLAGS += -O2
 endif
 
-
+CDEFS = #-DDEBUG_EMBED_LUA
 ifeq ($(TARGET), Windows)
 	CC := gcc
 	EXE := .exe
@@ -43,9 +43,9 @@ ifeq ($(TARGET), Windows)
 else
 	ifeq ($(TARGET), Web)
 		CC := emcc
-		CFLAGS += -Wall -std=gnu99 -sALLOW_MEMORY_GROWTH -sFORCE_FILESYSTEM -s WASM=1 -s USE_SDL=2
+		CFLAGS += -Wall -std=gnu99 -s USE_SDL=2
 		GEN_CFLAGS = -Wall -std=gnu99
-		LFLAGS = -lm -ldl
+		LFLAGS = -lm -ldl -s ALLOW_MEMORY_GROWTH -s FORCE_FILESYSTEM -s WASM=1 -s FULL_ES2 
 		EXE := .html
 		CLEAR_FILES = *.wasm *.js
 		GEN_CC := cc
@@ -54,7 +54,6 @@ else
 		LFLAGS = -lm -lpthread -lSDL2 -ldl `sdl2-config --libs` -lGL
 	endif
 endif
-CDEFS = #-DDEBUG_EMBED_LUA
 
 OUT = $(NAME)$(EXE)
 GEN = gen$(EXE)
