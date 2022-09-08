@@ -10,7 +10,10 @@ function set_palette(pal)
     end
 end
 
-function poti.load()
+function poti.load(args)
+    print(#args)
+    print(args[2])
+    print(poti.filesystem.basepath())
     shader = poti.graphics.new_shader(
         [[
             vec4 position(vec2 pos, mat4 world, mat4 modelview) {

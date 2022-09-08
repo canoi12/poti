@@ -5,31 +5,27 @@
 char _basepath[1024] = "./";
 extern lua_State* _L;
 
+static void set_basepath(const i8* path);
+
 int poti_init_filesystem(lua_State* L) {
     const i8* basepath = luaL_checkstring(L, 1);
     if (basepath) {
-	i32 len = strlen(basepath);
-	strcpy(_basepath, basepath);
-	i8* c = &_basepath[len-2];
-	if (*c != '\\' || *c != '/') {
-#ifdef _WIN32
-	   c[1] = '\\';
-#else
-	   c[1] = '/';
-#endif
-	   c[2] = '\0';
-	}
+	set_basepath(basepath);
     }
     return 0;
 }
 
-static void set_basepath(const char* path) {
+void set_basepath(const char* path) {
     i32 len = strlen(path);
     strcpy(_basepath, path);
-    i8* c = &(_basepath[len-2]);
-    if (*c != '\\' || *c != '/') {
+    i8* c = &(_basepath[len-1]);
+    if (*c != '\\' && *c != '/') {
 	c++;
-	c[0] = '/';
+#ifdef _WIN32
+       c[0] = '\\';
+#else
+       c[0] = '/';
+#endif
 	c[1] = '\0';
     }
 }
@@ -82,8 +78,13 @@ static int l_poti_filesystem_set_basepath(lua_State* L) {
 static int l_poti_filesystem_exists(lua_State* L) {
     struct stat info;
     const i8* path = luaL_checkstring(L, 1);
+    lua_pushstring(L, _basepath);
+    lua_pushstring(L, path);
+    lua_concat(L, 2);
+    const i8* rpath = lua_tostring(L, -1);
     i32 exists = 1;
-    if (stat(path, &info) == -1) exists = 0;
+    if (stat(rpath, &info) == -1) exists = 0;
+    lua_pop(L, 1);
     lua_pushboolean(L, exists);
     return 1;
 }

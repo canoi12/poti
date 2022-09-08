@@ -115,7 +115,6 @@ local function _setup(glsl, es)
         defines = "out vec4 o_FragColor;\n"
     end
     frag_top = frag_top .. defines
-    print(glsl, es)
     return function(vert, frag)
 	vert = vert or position
 	frag = frag or pixel

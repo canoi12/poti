@@ -180,54 +180,13 @@ int poti_init(int argc, char** argv) {
     _gl_ctx = lua_touserdata(L, -2);
     lua_pop(L, 2);
 
-#if 0
-#if !defined(POTI_NO_WINDOW)
-    lua_pushcfunction(L, poti_init_window);
-    if (lua_pcall(L, 0, 1, 0) != 0) {
-	fprintf(stderr, "Failed to init Window: %s\n", lua_tostring(L, -1));
-	exit(EXIT_FAILURE);
-    }
-    _window = lua_touserdata(L, -1);
-    lua_rawsetp(L, LUA_REGISTRYINDEX, _window);
-    #if !defined(POTI_NO_GRAPHICS)
-
-    lua_pushcfunction(L, poti_init_graphics);
-    lua_pushlightuserdata(L, _window);
-    if (lua_pcall(L, 1, 1, 0) != 0) {
-	fprintf(stderr, "Failed to init graphics: %s\n", lua_tostring(L, -1));
-	exit(EXIT_FAILURE);
-    }
-    _gl_ctx = lua_touserdata(L, -1);
-    lua_rawsetp(L, LUA_REGISTRYINDEX, _gl_ctx);
-    #endif
-#endif
-
-#if !defined(POTI_NO_AUDIO)
-    lua_pushcfunction(L, poti_init_audio);
-    if (lua_pcall(L, 0, 0, 0) != 0) {
-	fprintf(stderr, "Failed to init audio: %s\n", lua_tostring(L, -1));
-	exit(EXIT_FAILURE);
-    }
-#endif
-
-    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_step_reg);
-    i32 err = lua_pcall(L, 0, 1, 0);
-    if (err != 0) {
-	const i8* str = lua_tostring(L, -1);
-	fprintf(stderr, "Lua error: %s\n", str);
-	exit(EXIT_FAILURE);
-    }
-    lua_rawsetp(L, LUA_REGISTRYINDEX, &l_step_reg);
-#endif
     return 1;
 }
 
 static void poti_step(void) {
     lua_State* L = _L;
-    //poti_graphics_begin(L);
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_step_reg);
     lua_pcall(L, 0, 0, 0);
-    //poti_graphics_end(L);
     SDL_GL_SwapWindow(_window);
 }
 
@@ -248,6 +207,7 @@ int poti_quit(void) {
 	fprintf(stderr, "Failed to call lua deinit function: %s\n", error_buf);
 	exit(EXIT_FAILURE);
     }
+    lua_close(_L);
     SDL_Quit();
     return 0;
 }
