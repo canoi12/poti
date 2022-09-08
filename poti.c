@@ -1,5 +1,7 @@
 #include "poti.h"
+#ifndef NO_EMBED
 #include "embed.h"
+#endif
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
@@ -153,7 +155,7 @@ int poti_init(int argc, char** argv) {
 	exit(EXIT_FAILURE);
     }
 
-#ifndef DEBUG_EMBED_LUA
+#ifndef NO_EMBED
     if (luaL_dostring(L, _embed_boot_lua) != LUA_OK) {
 	const i8* error_buf = lua_tostring(L, -1);
 	fprintf(stderr, "Failed to load poti lua boot: %s\n", error_buf);

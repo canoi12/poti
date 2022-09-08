@@ -3,6 +3,7 @@ PREFIX =
 CC = cc
 AR = ar
 CLEAR_FILES =
+NO_EMBED = 0
 
 RELEASE = 0
 
@@ -31,7 +32,10 @@ ifeq ($(RELEASE), 1)
 	CFLAGS += -O2
 endif
 
-CDEFS = #-DDEBUG_EMBED_LUA
+CDEFS =
+ifeq ($(NO_EMBED), 1)
+	CDEFS += -DNO_EMBED
+endif
 ifeq ($(TARGET), Windows)
 	CC := gcc
 	EXE := .exe
@@ -40,6 +44,7 @@ ifeq ($(TARGET), Windows)
 	CFLAGS += -Wall -std=c99
 	INCL += -Iexternal/SDL2/include
 	LFLAGS = -mwindows -lpthread -lmingw32 -Lexternal/SDL2/lib -lSDL2 -lopengl32
+	PATH := $(PATH):external/SDL2/bin
 else
 	ifeq ($(TARGET), Web)
 		CC := emcc
@@ -71,7 +76,7 @@ embed.h: $(GEN) $(EMBED)
 	@echo "********************************************************"
 	@echo "** GENERATING $@"
 	@echo "********************************************************"
-	./$(GEN) -n EMBED_H -t embed.h $(EMBED)
+	#./$(GEN) -n EMBED_H -t embed.h $(EMBED)
 
 $(GEN): gen.o
 	@echo "********************************************************"

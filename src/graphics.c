@@ -12,10 +12,14 @@ extern SDL_Window* _window;
 extern SDL_GLContext _gl_ctx;
 extern lua_State* _L;
 
+#ifndef NO_EMBED
 extern const char _embed_font_ttf[];
 extern const long _embed_font_ttf_size;
 
 extern const char _embed_shader_factory_lua[];
+#else
+static int _shader_factory_lua;
+#endif
 
 typedef struct Vertex Vertex;
 
@@ -237,7 +241,7 @@ static int l_poti_graphics_init(lua_State* L) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-#ifndef DEBUG_EMBED_LUA
+#ifndef NO_EMBED
     if (luaL_dostring(L, _embed_shader_factory_lua) != LUA_OK) {
 	const i8* error_buf = lua_tostring(L, -1);
 	fprintf(stderr, "Failed to init shader factory: %s\n", error_buf);
@@ -257,7 +261,11 @@ static int l_poti_graphics_init(lua_State* L) {
 	fprintf(stderr, "Failed to setup shader factory: %s\n", error_buf);
 	exit(EXIT_FAILURE);
     }
+#ifndef NO_EMBED
     lua_rawsetp(L, LUA_REGISTRYINDEX, _embed_shader_factory_lua);
+#else
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &_shader_factory_lua);
+#endif
 
     Texture* target = &(RENDER()->def_target);
     target->fbo = 0;
@@ -303,8 +311,16 @@ static int l_poti_graphics_init(lua_State* L) {
     lua_setfield(L, -2, "shader");
     /* default font */
     lua_pushcfunction(L, l_poti_graphics_new_font);
+#ifndef NO_EMBED
     lua_pushlightuserdata(L, (void*)_embed_font_ttf);
     lua_pushinteger(L, _embed_font_ttf_size);
+#else
+    void* data;
+    size_t fsize;
+    data = (void*)poti_fs_read_file("embed/font.ttf", &fsize);
+    lua_pushlightuserdata(L, data);
+    lua_pushinteger(L, fsize);
+#endif
     lua_pushinteger(L, 16);
     lua_pcall(L, 3, 1, 0);
     RENDER()->def_font = lua_touserdata(L, -1);
@@ -1100,7 +1116,11 @@ int s_load_program(int vertex, int fragment) {
 }
 
 int l_poti_graphics_new_shader(lua_State* L) {
+#ifndef NO_EMBED
     lua_rawgetp(L, LUA_REGISTRYINDEX, _embed_shader_factory_lua); 
+#else
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &_shader_factory_lua); 
+#endif
     lua_pushvalue(L, 1);
     lua_pushvalue(L, 2);
     if (lua_pcall(L, 2, 2, 0) != LUA_OK) {
