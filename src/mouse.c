@@ -1,7 +1,7 @@
 #include "poti.h"
 #if !defined(POTI_NO_MOUSE) && !defined(POTI_NO_INPUT)
 
-static int l_poti_mouse_pos(lua_State *L) {
+static int l_poti_mouse_position(lua_State *L) {
     int x, y;
     SDL_GetMouseState(&x, &y);
 
@@ -14,7 +14,7 @@ static int mouse_down(int btn) {
     return SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(btn);
 }
 
-static int l_poti_mouse_down(lua_State *L) {
+static int l_poti_mouse_is_down(lua_State *L) {
     int button = luaL_checknumber(L, 1);
 
     lua_pushboolean(L, mouse_down(button));
@@ -22,7 +22,7 @@ static int l_poti_mouse_down(lua_State *L) {
     return 1;
 }
 
-static int l_poti_mouse_up(lua_State *L) {
+static int l_poti_mouse_is_up(lua_State *L) {
     int button = luaL_checknumber(L, 1) - 1;
     lua_pushboolean(L, !mouse_down(button));
     
@@ -31,9 +31,9 @@ static int l_poti_mouse_up(lua_State *L) {
 
 int luaopen_mouse(lua_State *L) {
     luaL_Reg reg[] = {
-        {"position", l_poti_mouse_pos},
-        {"down", l_poti_mouse_down},
-        {"up", l_poti_mouse_up},
+        {"position", l_poti_mouse_position},
+        {"is_down", l_poti_mouse_is_down},
+        {"is_up", l_poti_mouse_is_up},
         {NULL, NULL}
     };
     luaL_newlib(L, reg);

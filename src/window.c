@@ -139,7 +139,6 @@ static int l_poti_window_bordered(lua_State *L) {
     Uint32 flags = SDL_GetWindowFlags(_window);
 
     bordered = ~flags & SDL_WINDOW_BORDERLESS;
-
     if (!lua_isnil(L, 1)) {
         bordered = lua_toboolean(L, 1);
         SDL_SetWindowBordered(_window, bordered);
@@ -152,9 +151,7 @@ static int l_poti_window_bordered(lua_State *L) {
 static int l_poti_window_border_size(lua_State *L) {
 
     int borders[4];
-
     SDL_GetWindowBordersSize(_window, &borders[0], &borders[1], &borders[2], &borders[3]);
-
     for (int i = 0; i < 4; i++) lua_pushinteger(L, borders[i]);
 
     return 4;
@@ -203,8 +200,8 @@ static int l_poti_window_simple_message_box(lua_State *L) {
 
 int luaopen_window(lua_State* L) {
     luaL_Reg reg[] = {
-	{"init", l_poti_window_init},
-	{"deinit", l_poti_window_deinit},
+        {"init", l_poti_window_init},
+        {"deinit", l_poti_window_deinit},
         {"title", l_poti_window_title},
         {"width", l_poti_window_width},
         {"height", l_poti_window_height},

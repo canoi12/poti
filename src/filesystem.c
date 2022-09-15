@@ -22,9 +22,9 @@ void set_basepath(const char* path) {
     if (*c != '\\' && *c != '/') {
 	c++;
 #ifdef _WIN32
-       c[0] = '\\';
+    c[0] = '\\';
 #else
-       c[0] = '/';
+    c[0] = '/';
 #endif
 	c[1] = '\0';
     }
@@ -75,6 +75,14 @@ static int l_poti_filesystem_set_basepath(lua_State* L) {
     return 0;
 }
 
+static int l_poti_filesystem_resolve(lua_State* L) {
+    const i8* name = luaL_checkstring(L, 1);
+    lua_pushstring(L, _basepath);
+    lua_pushstring(L, 1);
+    lua_concat(L, 2);
+    return 1;
+}
+
 static int l_poti_filesystem_exists(lua_State* L) {
     struct stat info;
     const i8* path = luaL_checkstring(L, 1);
@@ -104,7 +112,7 @@ int luaopen_filesystem(lua_State* L) {
 	{"init", l_poti_filesystem_init},
 	{"basepath", l_poti_filesystem_basepath},
 	{"set_basepath", l_poti_filesystem_set_basepath},
-	{"resolve", NULL},
+	{"resolve", l_poti_filesystem_resolve},
 	{"exists", l_poti_filesystem_exists},
 	{"read", l_poti_filesystem_read},
 	{"write", NULL},

@@ -169,7 +169,7 @@ static int l_poti_graphics_init(lua_State* L) {
 
     lua_pushcfunction(L, l_perspective_func);
     lua_rawsetp(L, LUA_REGISTRYINDEX, l_perspective_func);
- 
+
     SDL_Window* window = lua_touserdata(L, 2);
     lua_getfield(L, 1, "gl");
     i32 profile, major, minor;
@@ -364,7 +364,7 @@ static int l_poti_graphics_clear(lua_State* L) {
 static int l_poti_graphics_set_color(lua_State* L) {
     i32 args = lua_gettop(L);
     for (i32 i = 0; i < args; i++)
-	RENDER()->color[i] = luaL_checknumber(L, i+1) / 255.f;
+		RENDER()->color[i] = luaL_checknumber(L, i+1) / 255.f;
 
     return 0;
 }
@@ -380,6 +380,19 @@ static int l_poti_graphics_set_shader(lua_State* L) {
     Shader* shader = luaL_testudata(L, 1, SHADER_META);
     shader = shader ? shader : RENDER()->def_shader;
     set_shader(shader);
+    return 0;
+}
+
+static int l_poti_graphics_set_draw(lua_State* L) {
+    const i8* s_mode = luaL_checkstring(L, 1);
+    u8 mode = POTI_LINE;
+    if (!strcmp(s_mode, "line")) mode = POTI_LINE;
+    else if (!strcmp(s_mode, "fill")) mode = POTI_FILL;
+    else {
+        luaL_error(L, "invalid draw mode: %s", s_mode);
+        return 1;
+    }
+    set_draw_mode(mode);
     return 0;
 }
 
@@ -416,19 +429,23 @@ static int l_poti_graphics_point(lua_State* L) {
 
 static int l_poti_graphics_line(lua_State* L) {
     f32 p[4];
+    set_texture(RENDER()->white);
 
     for (int i = 0; i < 4; i++)
 	p[i] = luaL_checknumber(L, i+1);
     f32* c= RENDER()->color;
     f32 vertices[] = {
 	p[0], p[1], c[0], c[1], c[2], c[3], 0.f, 0.f,
-	p[2], p[2], c[0], c[1], c[2], c[3], 1.f, 1.f,
+	p[2], p[3], c[0], c[1], c[2], c[3], 1.f, 1.f,
     };
+	push_vertices(VERTEX(), 2, (VertexFormat*)vertices);
 
+	/*
     Texture* tex = RENDER()->white;
     glBindTexture(GL_TEXTURE_2D, tex->handle);
     glBufferSubData(GL_ARRAY_BUFFER, 0, 2 * sizeof(VertexFormat), vertices);
     glDrawArrays(GL_LINES, 0, 1);
+	*/
 
     return 0;
 }
@@ -654,13 +671,17 @@ static int l_poti_graphics_triangle(lua_State *L) {
 static int l_poti_graphics_push_vertex(lua_State *L) {
     float *c = RENDER()->color;
     VertexFormat vertex = {
-	{0.f, 0.f,
-	c[0], c[1], c[2], c[3],
-	0.f, 0.f}
+		{
+		0.f, 0.f,
+		c[0], c[1], c[2], c[3],
+		0.f, 0.f
+		}
     };
+	// fprintf(stderr, "color: %f %f %f %f\n", c[0], c[1], c[2], c[3]);
     vertex.data[0] = luaL_checknumber(L, 1);
     vertex.data[1] = luaL_checknumber(L, 2);
-    for (i32 i = 0; i < 6; i++) {
+	i32 top = lua_gettop(L) - 2;
+    for (i32 i = 0; i < top; i++) {
         vertex.data[i+2] = luaL_optnumber(L, 3+i, vertex.data[i+2]);
     }
 
@@ -1284,12 +1305,14 @@ int luaopen_graphics(lua_State* L) {
 	{"draw_buffer", l_poti_graphics_draw_buffer},
 	{"clear", l_poti_graphics_clear},
 	{"set_color", l_poti_graphics_set_color},
+    {"set_draw", l_poti_graphics_set_draw},
 	{"point", l_poti_graphics_point},
 	{"line", l_poti_graphics_line},
 	{"circle", l_poti_graphics_circle},
 	{"rectangle", l_poti_graphics_rectangle},
 	{"triangle", l_poti_graphics_triangle},
 	{"print", l_poti_graphics_print},
+	{"push_vertex", l_poti_graphics_push_vertex},
 	{"draw", NULL},
 	{"swap", l_poti_graphics_swap},
 	{NULL, NULL}
@@ -1424,34 +1447,31 @@ void set_shader(Shader *s) {
 void set_target(Texture *t) {
     if (t->handle != 0 && t->fbo == 0) return;
     if (t->handle == 0 && t->fbo == 0) {
-	i32 ww, hh;
-	SDL_GetWindowSize(_window, &ww, &hh);
-	t->width = ww;
-	t->height = hh;
+		i32 ww, hh;
+		SDL_GetWindowSize(_window, &ww, &hh);
+		t->width = ww;
+		t->height = hh;
     }
     if (RENDER()->target != t) {
         draw_vertex(VERTEX());
         clear_vertex(VERTEX());
         RENDER()->target = t;
-        glBindFramebuffer(GL_FRAMEBUFFER, t->fbo);
-        glViewport(0, 0, t->width, t->height);
+    }
+	glBindFramebuffer(GL_FRAMEBUFFER, t->fbo);
+	glViewport(0, 0, t->width, t->height);
 
-        Shader *s = RENDER()->shader;
-
-        GLint view[4];
-        glGetIntegerv(GL_VIEWPORT, view);
+	Shader *s = RENDER()->shader;
 
 	lua_rawgetp(_L, LUA_REGISTRYINDEX, l_perspective_func);
-	lua_pushnumber(_L, view[2]);
-	lua_pushnumber(_L, view[3]);
+	lua_pushnumber(_L, t->width);
+	lua_pushnumber(_L, t->height);
 	mat4x4_identity(RENDER()->world);
 	if (lua_pcall(_L, 2, 0, 0) != LUA_OK) {
-	    fprintf(stderr, "Failed to call perspective matrix function"); 
+		fprintf(stderr, "Failed to call perspective matrix function"); 
 	}
 
-        glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *(RENDER()->world));
-        glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, *(RENDER()->modelview));
-    }
+	glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *(RENDER()->world));
+	glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, *(RENDER()->modelview));
 }
 
 void set_draw_mode(u8 draw_mode) {
