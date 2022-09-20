@@ -69,9 +69,9 @@ struct Shader {
 
 typedef union {
     struct {
-	f32 x, y;
-	f32 r, g, b, a;
-	f32 u, v;
+		f32 x, y;
+		f32 r, g, b, a;
+		f32 u, v;
     };
     f32 data[8];
 } VertexFormat;
@@ -452,48 +452,47 @@ static int l_poti_graphics_line(lua_State* L) {
 
 typedef void(*DrawCircle)(f32, f32, f32, i32);
 static void push_filled_circle(float xc, float yc, float radius, int segments) {
-    float sides = segments >= 4 ? segments : 4;
-    int bsize = (3*sides);
+    f32 sides = segments >= 4 ? segments : 4;
+    i32 bsize = (3*sides);
     VertexFormat vertices[bsize];
     // float vertices[bsize];
-    double pi2 = 2.0 * M_PI;
+    f64 pi2 = 2.0 * M_PI;
 
     // float *v = vertices;
     VertexFormat* v = vertices;
-    for (int i = 0; i < sides; i++) {
+    for (i32 i = 0; i < sides; i++) {
+		v->x = xc;
+		v->y = yc;
+		v->r = RENDER()->color[0];
+		v->g = RENDER()->color[1];
+		v->b = RENDER()->color[2];
+		v->a = RENDER()->color[3];
+		v->u = 0.f;
+		v->v = 0.f;
+		v++;
 
-	v->x = xc;
-	v->y = yc;
-	v->r = RENDER()->color[0];
-	v->g = RENDER()->color[1];
-	v->b = RENDER()->color[2];
-	v->a = RENDER()->color[3];
-	v->u = 0.f;
-	v->v = 0.f;
-	v++;
+		f32 tetha = (i * pi2) / sides;
 
-        float tetha = (i * pi2) / sides;
+		v->x = xc + (cosf(tetha) * radius);
+		v->y = yc + (sinf(tetha) * radius);
+		v->r = RENDER()->color[0];
+		v->g = RENDER()->color[1];
+		v->b = RENDER()->color[2];
+		v->a = RENDER()->color[3];
+		v->u = 0.f;
+		v->v = 0.f;
+		v++;
 
-        v->x = xc + (cosf(tetha) * radius);
-        v->y = yc + (sinf(tetha) * radius);
-	v->r = RENDER()->color[0];
-	v->g = RENDER()->color[1];
-	v->b = RENDER()->color[2];
-	v->a = RENDER()->color[3];
-	v->u = 0.f;
-	v->v = 0.f;
-        v++;
+		tetha = ((i+1) * pi2) / sides;
 
-        tetha = ((i+1) * pi2) / sides;
-
-        v->x = xc + (cosf(tetha) * radius);
-        v->y = yc + (sinf(tetha) * radius);
-	v->r = RENDER()->color[0];
-	v->g = RENDER()->color[1];
-	v->b = RENDER()->color[2];
-	v->a = RENDER()->color[3];
-	v->u = 0.f;
-	v->v = 0.f;
+		v->x = xc + (cosf(tetha) * radius);
+		v->y = yc + (sinf(tetha) * radius);
+		v->r = RENDER()->color[0];
+		v->g = RENDER()->color[1];
+		v->b = RENDER()->color[2];
+		v->a = RENDER()->color[3];
+		v->u = 0.f;
+		v->v = 0.f;
         v++;
     }
 
@@ -501,16 +500,17 @@ static void push_filled_circle(float xc, float yc, float radius, int segments) {
     // glDrawArrays(GL_TRIANGLES, 0, 3*sides);
     push_vertices(VERTEX(), 3*sides, vertices);
 }
+
 static void push_lined_circle(float xc, float yc, float radius, int segments) {
-    float sides = segments >= 4 ? segments : 4;
-    int bsize = (2*sides);
+    f32 sides = segments >= 4 ? segments : 4;
+    i32 bsize = (2*sides);
     // float vertices[bsize];
     VertexFormat vertices[bsize];
-    double pi2 = 2.0 * M_PI;
+    f64 pi2 = 2.0 * M_PI;
 
     VertexFormat* v = vertices;
-    for (int i = 0; i < sides; i++) {
-        float tetha = (i * pi2) / sides;
+    for (i32 i = 0; i < sides; i++) {
+        f32 tetha = (i * pi2) / sides;
 
         v->x = xc + (cosf(tetha) * radius);
         v->y = yc + (sinf(tetha) * radius);
@@ -520,7 +520,7 @@ static void push_lined_circle(float xc, float yc, float radius, int segments) {
         v->a = RENDER()->color[3];
         v->u = 0.f;
         v->v = 0.f;
-	v++;
+		v++;
 
         tetha = ((i+1) * pi2) / sides;
 
@@ -532,7 +532,7 @@ static void push_lined_circle(float xc, float yc, float radius, int segments) {
         v->a = RENDER()->color[3];
         v->u = 0.f;
         v->v = 0.f;
-	v++;
+		v++;
     }
     push_vertices(VERTEX(), 2*sides, vertices);
 
@@ -653,9 +653,8 @@ static int l_poti_graphics_triangle(lua_State *L) {
 
     float points[6];
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 6; i++)
         points[i] = luaL_checknumber(L, i+1);
-    }
 
     set_texture(RENDER()->white);
     const DrawTriangle fn[] = {
@@ -669,22 +668,22 @@ static int l_poti_graphics_triangle(lua_State *L) {
 }
 
 static int l_poti_graphics_push_vertex(lua_State *L) {
-    float *c = RENDER()->color;
-    VertexFormat vertex = {
-		{
+	set_texture(RENDER()->white);
+    f32 *c = RENDER()->color;
+	f32 f[8] = {
 		0.f, 0.f,
 		c[0], c[1], c[2], c[3],
 		0.f, 0.f
-		}
-    };
+	};
+	VertexFormat vertex;
 	// fprintf(stderr, "color: %f %f %f %f\n", c[0], c[1], c[2], c[3]);
-    vertex.data[0] = luaL_checknumber(L, 1);
-    vertex.data[1] = luaL_checknumber(L, 2);
+    f[0] = luaL_checknumber(L, 1);
+    f[1] = luaL_checknumber(L, 2);
 	i32 top = lua_gettop(L) - 2;
     for (i32 i = 0; i < top; i++) {
-        vertex.data[i+2] = luaL_optnumber(L, 3+i, vertex.data[i+2]);
+        f[i+2] = luaL_optnumber(L, 3+i, f[i+2]);
     }
-
+	memcpy(&vertex, f, sizeof(VertexFormat));
     push_vertex(VERTEX(), vertex);
     return 0;
 }
@@ -1036,7 +1035,7 @@ static int l_poti_texture__draw(lua_State* L) {
     return 0;
 }
 
-static int luaopen_texture(lua_State* L) {
+static int l_texture_meta(lua_State* L) {
     luaL_Reg reg[] = {
         {"draw", l_poti_texture__draw},
 #if 0
@@ -1144,9 +1143,9 @@ int l_poti_graphics_new_shader(lua_State* L) {
 #endif
     lua_pushvalue(L, 1);
     lua_pushvalue(L, 2);
-    if (lua_pcall(L, 2, 2, 0) != LUA_OK) {
-	luaL_error(L, "failed to make glsl string\n");
-	return 1;
+	if (lua_pcall(L, 2, 2, 0) != LUA_OK) {
+		luaL_error(L, "failed to make glsl string\n");
+		return 1;
     }
 
     const i8* vert_src = lua_tostring(L, -1);
@@ -1262,7 +1261,7 @@ static int l_poti_shader__gc(lua_State *L) {
     return 0;
 }
 
-static int luaopen_shader(lua_State* L) {
+static int l_shader_meta(lua_State* L) {
     luaL_Reg reg[] = {
         {"location", l_poti_shader__location},
         {"send", l_poti_shader__send},
@@ -1280,47 +1279,47 @@ static int luaopen_shader(lua_State* L) {
 int luaopen_graphics(lua_State* L) {
 
     luaL_Reg reg[] = {
-	{"init", l_poti_graphics_init},
-	{"deinit", l_poti_graphics_deinit},
-	{"size", l_poti_graphics_size},
-	/* texture */
-	{"new_texture", l_poti_graphics_new_texture},
-	{"load_texture", l_poti_graphics_load_texture},
-	{"set_target", l_poti_graphics_set_target},
-	/* font */
-	{"load_font", l_poti_graphics_load_font},
-	{"set_font", NULL},
-	/* shader */
-	{"new_shader", l_poti_graphics_new_shader},
-	{"set_shader", l_poti_graphics_set_shader},
-	/* transform */
-	{"identity", l_poti_graphics_identity},
-	{"translate", l_poti_graphics_translate},
-	{"scale", l_poti_graphics_scale},
-	{"rotate", l_poti_graphics_rotate},
-	/* draw */
-	{"blend_mode", NULL},
-	{"clear_buffer", l_poti_graphics_clear_buffer},
-	{"bind_buffer", l_poti_graphics_bind_buffer},
-	{"draw_buffer", l_poti_graphics_draw_buffer},
-	{"clear", l_poti_graphics_clear},
-	{"set_color", l_poti_graphics_set_color},
-    {"set_draw", l_poti_graphics_set_draw},
-	{"point", l_poti_graphics_point},
-	{"line", l_poti_graphics_line},
-	{"circle", l_poti_graphics_circle},
-	{"rectangle", l_poti_graphics_rectangle},
-	{"triangle", l_poti_graphics_triangle},
-	{"print", l_poti_graphics_print},
-	{"push_vertex", l_poti_graphics_push_vertex},
-	{"draw", NULL},
-	{"swap", l_poti_graphics_swap},
-	{NULL, NULL}
+		{"init", l_poti_graphics_init},
+		{"deinit", l_poti_graphics_deinit},
+		{"size", l_poti_graphics_size},
+		/* texture */
+		{"new_texture", l_poti_graphics_new_texture},
+		{"load_texture", l_poti_graphics_load_texture},
+		{"set_target", l_poti_graphics_set_target},
+		/* font */
+		{"load_font", l_poti_graphics_load_font},
+		{"set_font", NULL},
+		/* shader */
+		{"new_shader", l_poti_graphics_new_shader},
+		{"set_shader", l_poti_graphics_set_shader},
+		/* transform */
+		{"identity", l_poti_graphics_identity},
+		{"translate", l_poti_graphics_translate},
+		{"scale", l_poti_graphics_scale},
+		{"rotate", l_poti_graphics_rotate},
+		/* draw */
+		{"blend_mode", NULL},
+		{"clear_buffer", l_poti_graphics_clear_buffer},
+		{"bind_buffer", l_poti_graphics_bind_buffer},
+		{"draw_buffer", l_poti_graphics_draw_buffer},
+		{"clear", l_poti_graphics_clear},
+		{"set_color", l_poti_graphics_set_color},
+		{"set_draw", l_poti_graphics_set_draw},
+		{"point", l_poti_graphics_point},
+		{"line", l_poti_graphics_line},
+		{"circle", l_poti_graphics_circle},
+		{"rectangle", l_poti_graphics_rectangle},
+		{"triangle", l_poti_graphics_triangle},
+		{"print", l_poti_graphics_print},
+		{"push_vertex", l_poti_graphics_push_vertex},
+		{"draw", NULL},
+		{"swap", l_poti_graphics_swap},
+		{NULL, NULL}
     };
     luaL_newlib(L, reg);
-    luaopen_texture(L);
+    l_texture_meta(L);
     lua_setfield(L, -2, TEXTURE_META);
-    luaopen_shader(L);
+    l_shader_meta(L);
     lua_setfield(L, -2, SHADER_META);
     return 1;
 }
@@ -1391,9 +1390,9 @@ void init_vertex(Vertex* v, u32 size) {
     glEnableVertexAttribArray(1);
     glEnableVertexAttribArray(2);
 
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(f32), (void*)0);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(f32), (void*)(sizeof(f32) * 2));
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(f32), (void*)(sizeof(f32) * 6));
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(VertexFormat), (void*)0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(VertexFormat), (void*)(sizeof(f32) * 2));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexFormat), (void*)(sizeof(f32) * 6));
 
 #if !defined(__EMSCRIPTEN__)
     glBindVertexArray(0);
@@ -1487,9 +1486,9 @@ void push_vertex(Vertex* vert, VertexFormat data) {
     if (vert->offset + size > vert->size) {
         vert->size *= 2;
         vert->data = realloc(vert->data, vert->size);
-	glBufferData(GL_ARRAY_BUFFER, vert->size, vert->data, GL_DYNAMIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, vert->size, vert->data, GL_DYNAMIC_DRAW);
     }
-    char *vdata = ((char*)vert->data)+vert->offset;
+    i8 *vdata = ((i8*)vert->data)+vert->offset;
     vert->offset += size;
     memcpy(vdata, &data, size);
 }
@@ -1499,9 +1498,9 @@ void push_vertices(Vertex *vert, u32 count, VertexFormat* vertices) {
     if (vert->offset + size > vert->size) {
         vert->size *= 2;
         vert->data = realloc(vert->data, vert->size);
-	glBufferData(GL_ARRAY_BUFFER, vert->size, vert->data, GL_DYNAMIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, vert->size, vert->data, GL_DYNAMIC_DRAW);
     }
-    char *data = ((char*)vert->data)+vert->offset;
+    i8 *data = ((i8*)vert->data)+vert->offset;
     vert->offset += size;
     memcpy(data, vertices, size);
 }

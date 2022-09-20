@@ -84,11 +84,24 @@ static int l_poti_gamepad__rumble(lua_State *L) {
     return 1;
 }
 
+const char *gpad_powerlevels[] = {
+    "unknown", "empty", "low", "medium", "high", "full", "wired"
+};
+
+static int l_poti_gamepad__powerlevel(lua_State* L) {
+	GameController** g = luaL_checkudata(L, 1, GAMEPAD_META);
+	if (!(*g)) {
+		luaL_error(L, "Closed joystick\n");
+		return 1;
+	}
+	SDL_Joystick *j = SDL_GameControllerGetJoystick(*g);
+	lua_pushstring(L, gpad_powerlevels[SDL_JoystickCurrentPowerLevel(j)+1]);
+	return 1;
+}
+
 static int l_poti_gamepad__close(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_META);
-    if (SDL_GameControllerGetAttached(*g)) {
-        SDL_GameControllerClose(*g);
-    }
+    if (SDL_GameControllerGetAttached(*g)) SDL_GameControllerClose(*g);
     return 0;
 }
 
@@ -103,7 +116,6 @@ int luaopen_gamepad(lua_State *L) {
         {"is", l_poti_gamepad_is},
         {NULL, NULL}
     };
-
     luaL_newlib(L, reg);
 
     luaL_Reg meta[] = {
@@ -114,7 +126,7 @@ int luaopen_gamepad(lua_State *L) {
         {"product", l_poti_gamepad__product},
         {"product_version", l_poti_gamepad__product_version},
         {"rumble", l_poti_gamepad__rumble},
-        // {"powerlevel", l_poti_gamepad__powerlevel},
+        {"powerlevel", l_poti_gamepad__powerlevel},
         {"__gc", l_poti_gamepad__gc},
         {NULL, NULL}
     };

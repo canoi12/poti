@@ -26,7 +26,7 @@ local frag_top = ""
 
 local position = [[
 vec4 position(vec2 pos, mat4 world, mat4 modelview) {
-    return world * modelview * vec4(pos.x, pos.y, 0.0, 1.0);
+    return world * modelview * vec4(pos, 0, 1.0);
 }
 ]]
 
@@ -45,7 +45,6 @@ void main() {
 ]]
 
 local frag_main = [[
-
 void main() {
     o_FragColor = pixel(v_Color, v_TexCoord, u_Texture);
 }
@@ -120,13 +119,13 @@ local function _setup(glsl, es)
     _setup_varying(glsl)
 
     return function(vert, frag)
-	vert = vert or position
-	frag = frag or pixel
+		vert = vert or position
+		frag = frag or pixel
 
-	local vert_src = string.format("%s\n%s\n%s", vert_top, vert, vert_main)
-	local frag_src = string.format("%s\n%s\n%s", frag_top, frag, frag_main)
+		local vert_src = string.format("%s\n%s\n%s", vert_top, vert, vert_main)
+		local frag_src = string.format("%s\n%s\n%s", frag_top, frag, frag_main)
 
-	return frag_src, vert_src
+		return frag_src, vert_src
     end
 end
 

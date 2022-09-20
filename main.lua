@@ -103,11 +103,12 @@ function poti.draw()
     poti.graphics.print("test")
     poti.graphics.print("delta: " .. delta, 0, 16)
 
+	-- poti.graphics.triangle(80, 32, 48, 48, 112, 48)
     poti.graphics.set_color(255, 0, 0)
     poti.graphics.push_vertex(64, 64)
     poti.graphics.set_color(0, 255, 0)
     poti.graphics.push_vertex(32, 96)
-    poti.graphics.set_color(255, 255, 255)
+    poti.graphics.set_color(0, 0, 255)
     poti.graphics.push_vertex(96, 96)
 
     poti.graphics.set_target()

@@ -33,7 +33,6 @@ int l_register_audio_reg;
 int l_check_audio_reg;
 int l_audio_bank_reg;
 
-
 static u32 s_audio_id = 0;
 
 struct AudioData {
@@ -66,11 +65,10 @@ static struct AudioSystem _audio;
 
 static inline void s_audio_callback(ma_device *device, void *output, const void *input, ma_uint32 frameCount);
 
-
 static int l_poti_audio_init(lua_State* L) {
     if (luaL_dostring(L, audio_bank) != LUA_OK) {
-	fprintf(stderr, "Failed to load audio bank function: %s\n", lua_tostring(L, -1));
-	exit(EXIT_FAILURE);
+		fprintf(stderr, "Failed to load audio bank function: %s\n", lua_tostring(L, -1));
+		exit(EXIT_FAILURE);
     }
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_audio_bank_reg);
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_check_audio_reg);
@@ -79,8 +77,8 @@ static int l_poti_audio_init(lua_State* L) {
     ma_context_config ctx_config = ma_context_config_init();
     ma_result result = ma_context_init(NULL, 0, &ctx_config, &(_audio.ctx));
     if (result != MA_SUCCESS) {
-	fprintf(stderr, "Failed to init audio context\n");
-	exit(EXIT_FAILURE);
+		fprintf(stderr, "Failed to init audio context\n");
+		exit(EXIT_FAILURE);
     }
 
     ma_device_config dev_config = ma_device_config_init(ma_device_type_playback);
@@ -129,11 +127,10 @@ static int l_poti_audio_init(lua_State* L) {
 
 static int l_poti_audio_deinit(lua_State* L) {
     if (_audio.is_ready) {
-	ma_mutex_uninit(&(_audio.lock));
-	ma_device_uninit(&(_audio.device));
-	ma_context_uninit(&(_audio.ctx));
-    } else
-	fprintf(stderr, "Audio module could not be close, not initialized\n");
+		ma_mutex_uninit(&(_audio.lock));
+		ma_device_uninit(&(_audio.device));
+		ma_context_uninit(&(_audio.ctx));
+    } else fprintf(stderr, "Audio module could not be close, not initialized\n");
     return 0;
 }
 
@@ -230,11 +227,13 @@ static int l_poti_audio_load_audio(lua_State* L) {
 #endif
 }
 
-static int l_poti_audio_volume(lua_State* L) {
+static int l_poti_audio_set_volume(lua_State* L) {
+	f32 volume = luaL_checknumber(L, 1);
+	ma_device_set_master_volume(&(_audio.device), volume);
 	return 0;
 }
 
-static int l_poti_audio_play(lua_State* L) {
+static int l_poti_audio__play(lua_State* L) {
     //Audio* audio = luaL_checkudata(L, 1, AUDIO_META);
     AudioData* audio = luaL_checkudata(L, 1, AUDIO_META);
     i32 i;
@@ -242,9 +241,9 @@ static int l_poti_audio_play(lua_State* L) {
 	    if (_audio.buffers[i].loaded) break;
     }
     if (i == MAX_AUDIO_BUFFER_CHANNELS) {
-	lua_pushstring(L, "Audio buffers limit reached\n");
-	lua_error(L);
-	return 1;
+		lua_pushstring(L, "Audio buffers limit reached\n");
+		lua_error(L);
+		return 1;
     }
 
     AudioBuffer* buffer = &_audio.buffers[i];
@@ -274,8 +273,7 @@ static int l_poti_audio_play(lua_State* L) {
     return 1;
 }
 
-static int l_poti_audio_stop(lua_State* L) {
-
+static int l_poti_audio__stop(lua_State* L) {
     return 0;
 }
 
@@ -294,9 +292,8 @@ static int l_poti_audio__pitch(lua_State* L) { return 0; }
 
 int l_poti_audio__gc(lua_State* L) { return 0; }
 
-int luaopen_audio(lua_State* L) {
-#if 0
-    luaL_Reg reg[] = {
+static int l_audio_meta(lua_State* L) {
+    luaL_Reg meta[] = {
         {"play", l_poti_audio__play},
         {"stop", l_poti_audio__stop},
         {"pause", l_poti_audio__pause},
@@ -306,17 +303,25 @@ int luaopen_audio(lua_State* L) {
         {"__gc", l_poti_audio__gc},
         {NULL, NULL}
     };
-#endif
-    luaL_Reg reg[] = {
-	{"init", l_poti_audio_init},
-	{"deinit", l_poti_audio_deinit},
-	{"load_audio", l_poti_audio_load_audio},
-	{"volume", NULL},
-	{"play", l_poti_audio_play},
-	{NULL, NULL}
-    };
+	luaL_newmetatable(L, AUDIO_META);
+	luaL_setfuncs(L, meta, 0);
+	lua_pushvalue(L, -1);
+	lua_setfield(L, -2, "__index");
+	return 1;
+}
 
+int luaopen_audio(lua_State* L) {
+    luaL_Reg reg[] = {
+		{"init", l_poti_audio_init},
+		{"deinit", l_poti_audio_deinit},
+		{"load_audio", l_poti_audio_load_audio},
+		{"set_volume", l_poti_audio_set_volume},
+		// {"play", l_poti_audio_play},
+		{NULL, NULL}
+    };
     luaL_newlib(L, reg);
+	l_audio_meta(L);
+	lua_setfield(L, -2, AUDIO_META);
     return 1;
 }
 
