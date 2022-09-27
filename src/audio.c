@@ -67,12 +67,12 @@ static inline void s_audio_callback(ma_device *device, void *output, const void 
 
 static int l_poti_audio_init(lua_State* L) {
     if (luaL_dostring(L, audio_bank) != LUA_OK) {
-		fprintf(stderr, "Failed to load audio bank function: %s\n", lua_tostring(L, -1));
-		exit(EXIT_FAILURE);
+        fprintf(stderr, "Failed to load audio bank function: %s\n", lua_tostring(L, -1));
+        exit(EXIT_FAILURE);
     }
-    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_audio_bank_reg);
-    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_check_audio_reg);
-    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_register_audio_reg);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &l_register_audio_reg);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &l_check_audio_reg);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &l_audio_bank_reg);
 
     ma_context_config ctx_config = ma_context_config_init();
     ma_result result = ma_context_init(NULL, 0, &ctx_config, &(_audio.ctx));
@@ -187,30 +187,29 @@ static int l_poti_audio_load_audio(lua_State* L) {
 	    adata->volume = 1.f;
 	    adata->pitch = 0.f;
 	    if (usage == AUDIO_STATIC) {
-		ma_decoder_config dec_config = ma_decoder_config_init(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS, AUDIO_DEVICE_SAMPLE_RATE);
-		ma_uint64 frame_count_out;
-		void* dec_data;
-		ma_result result = ma_decode_memory(data, size, &dec_config, &frame_count_out, &dec_data);
-		if (result != MA_SUCCESS) {
-		    luaL_error(L, "Failed to decode audio data");
-		    return 1;
-		}
-		adata->data = dec_data;
-		adata->size = frame_count_out;
-		free(data);
-	    } else {
-		adata->data = data;
-		adata->size = size;
-	    }
+            ma_decoder_config dec_config = ma_decoder_config_init(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS, AUDIO_DEVICE_SAMPLE_RATE);
+            ma_uint64 frame_count_out;
+            void* dec_data;
+            ma_result result = ma_decode_memory(data, size, &dec_config, &frame_count_out, &dec_data);
+            if (result != MA_SUCCESS) {
+                luaL_error(L, "Failed to decode audio data");
+                return 1;
+            }
+            adata->data = dec_data;
+            adata->size = frame_count_out;
+            free(data);
+        } else {
+            adata->data = data;
+            adata->size = size;
+        }
 	    lua_pushlightuserdata(L, adata);
 	    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_register_audio_reg);
 	    lua_pushvalue(L, -2);
 	    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-		luaL_error(L, "Failed to register audio data");
-		return 1;
+            luaL_error(L, "Failed to register audio data");
+            return 1;
 	    }
 	} 
-
 	// s_register_audio_data(L, usage, path);
 #if 0
 	AudioData *a_data = lua_touserdata(L, -1);
