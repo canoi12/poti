@@ -57,7 +57,7 @@ static int l_poti_gamepad__axis(lua_State *L) {
     const char *str = luaL_checkstring(L, 2);
     int axis = SDL_GameControllerGetAxisFromString(str);
     if (axis < 0) {
-        luaL_argerror(L, 2, "invalid axis");
+        return luaL_argerror(L, 2, "Invalid axis name");
     }
     f32 val = (f32)SDL_GameControllerGetAxis(*g, axis) / SDL_JOYSTICK_AXIS_MAX;
     lua_pushnumber(L, val);
@@ -91,8 +91,7 @@ const char *gpad_powerlevels[] = {
 static int l_poti_gamepad__powerlevel(lua_State* L) {
 	GameController** g = luaL_checkudata(L, 1, GAMEPAD_META);
 	if (!(*g)) {
-		luaL_error(L, "Closed joystick\n");
-		return 1;
+		return luaL_error(L, "Closed joystick");
 	}
 	SDL_Joystick *j = SDL_GameControllerGetJoystick(*g);
 	lua_pushstring(L, gpad_powerlevels[SDL_JoystickCurrentPowerLevel(j)+1]);

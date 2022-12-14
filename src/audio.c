@@ -21,6 +21,7 @@ const i8 lr_audio_data;
 const i8* audio_bank =
 "local audio_bank = { ['stream'] = {}, ['static'] = {} }\n"
 "local function check(usage, path)\n"
+"   if not audio_bank[usage] then error('Invalid audio usage') end\n"
 "   return audio_bank[usage][path]\n"
 "end\n"
 "local function register(usage, path, id, data)\n"
@@ -70,9 +71,10 @@ static int l_poti_audio_init(lua_State* L) {
         fprintf(stderr, "Failed to load audio bank function: %s\n", lua_tostring(L, -1));
         exit(EXIT_FAILURE);
     }
-    lua_rawsetp(L, LUA_REGISTRYINDEX, &l_register_audio_reg);
-    lua_rawsetp(L, LUA_REGISTRYINDEX, &l_check_audio_reg);
+    // fprintf(stderr, "%d %d %d\n", lua_type(L, -1), lua_type(L, -2), lua_type(L, -3));
     lua_rawsetp(L, LUA_REGISTRYINDEX, &l_audio_bank_reg);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &l_check_audio_reg);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, &l_register_audio_reg);
 
     ma_context_config ctx_config = ma_context_config_init();
     ma_result result = ma_context_init(NULL, 0, &ctx_config, &(_audio.ctx));
@@ -137,41 +139,24 @@ static int l_poti_audio_deinit(lua_State* L) {
 static int l_poti_audio_load_audio(lua_State* L) {
 #if !defined(POTI_NO_FILESYSTEM)
 	const char *path = luaL_checkstring(L, 1);
-	FILE* fp = fopen(path, "rb");
-	if (!fp) {
-	    fprintf(stderr, "Failed to load audio: %s\n", path);
-	    exit(EXIT_FAILURE);
-	}
-	fseek(fp, 0, SEEK_END);
-	i32 size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-	void* data = malloc(size);
-	fread(data, 1, size, fp);
-	free(fp);
 
 	const char* s_usage = luaL_optstring(L, 2, "stream");
 	const i8* tests[] = { "stream", "static" };
 	i32 check = 0;
 	for (i32 i = 0; i < 3; i++) {
-	    if (!strcmp(s_usage, tests[i])) {
-		check = 1;
-		break;
-	    }
+        if (!strcmp(s_usage, tests[i])) {
+            check = 1;
+            break;
+        }
 	}
-	if (!check) {
-	    lua_pushstring(L, "Invalid audio usage ");
-	    lua_pushstring(L, s_usage);
-	    lua_concat(L, 2);
-	    lua_error(L);
-	    return 1;
-	}
+	if (!check) return luaL_argerror(L, 2, "Invalid audio usage");
 
 	lua_rawgetp(L, LUA_REGISTRYINDEX, &l_check_audio_reg);	
 	lua_pushstring(L, s_usage);
 	lua_pushstring(L, path);
 	if (lua_pcall(L, 2, 1, 0) != 0) {
-	    fprintf(stderr, "Failed to check audio register\n");
-	    exit(EXIT_FAILURE);
+        fprintf(stderr, "Failed to check audio register\n");
+        exit(EXIT_FAILURE);
 	}
 	u8 exists = !lua_isnil(L, -1);
 
@@ -179,14 +164,19 @@ static int l_poti_audio_load_audio(lua_State* L) {
 	if (!strcmp(s_usage, "static")) usage = AUDIO_STATIC;
 
 	if (!exists) {
-	    lua_pop(L, 1);
-	    AudioData* adata = (AudioData*)malloc(sizeof(*adata));
-	    adata->id = ++s_audio_id;
-	    adata->usage = usage;
-	    adata->loop = 0;
-	    adata->volume = 1.f;
-	    adata->pitch = 0.f;
-	    if (usage == AUDIO_STATIC) {
+        lua_pop(L, 1);
+        size_t size;
+        void* data = (void*)poti_fs_read_file(path, &size);
+
+        AudioData* adata = (AudioData*)lua_newuserdata(L, sizeof(*adata));
+        luaL_setmetatable(L, AUDIO_META);
+        adata->id = ++s_audio_id;
+        adata->usage = usage;
+        adata->loop = 0;
+        adata->volume = 1.f;
+        adata->pitch = 0.f;
+
+        if (usage == AUDIO_STATIC) {
             ma_decoder_config dec_config = ma_decoder_config_init(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS, AUDIO_DEVICE_SAMPLE_RATE);
             ma_uint64 frame_count_out;
             void* dec_data;
@@ -202,24 +192,18 @@ static int l_poti_audio_load_audio(lua_State* L) {
             adata->data = data;
             adata->size = size;
         }
-	    lua_pushlightuserdata(L, adata);
-	    lua_rawgetp(L, LUA_REGISTRYINDEX, &l_register_audio_reg);
-	    lua_pushvalue(L, -2);
-	    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        int top = lua_gettop(L);
+        lua_rawgetp(L, LUA_REGISTRYINDEX, &l_register_audio_reg);
+        lua_pushstring(L, s_usage);
+        lua_pushstring(L, path);
+        lua_pushinteger(L, adata->id);
+        lua_pushvalue(L, top);
+        if (lua_pcall(L, 4, 0, 0) != LUA_OK) {
             luaL_error(L, "Failed to register audio data");
             return 1;
-	    }
+        }
 	} 
 	// s_register_audio_data(L, usage, path);
-#if 0
-	AudioData *a_data = lua_touserdata(L, -1);
-	lua_pop(L, 1);
-	lua_pushinteger(L, MAX_AUDIO_BUFFER_CHANNELS+a_data->id);
-	AudioData* audio = lua_newuserdata(L, sizeof(*audio));
-	luaL_setmetatable(L, AUDIO_META);
-	memcpy(audio, a_data, sizeof(AudioData));
-	return 1;
-#endif
 	return 1;
 #else
 	return 0;
@@ -227,33 +211,76 @@ static int l_poti_audio_load_audio(lua_State* L) {
 }
 
 static int l_poti_audio_set_volume(lua_State* L) {
-	f32 volume = luaL_checknumber(L, 1);
-	ma_device_set_master_volume(&(_audio.device), volume);
+    int top = lua_gettop(L);
+    if (top > 1) {
+        int index = luaL_checkinteger(L, 1) - 1;
+        float volume = luaL_checknumber(L, 2);
+        AudioBuffer* bf = &(_audio.buffers[index]);
+        bf->data.volume = volume;
+    } else {
+        float volume = luaL_checknumber(L, 1);
+        ma_device_set_master_volume(&(_audio.device), volume);
+    }
 	return 0;
 }
 
+static int l_poti_audio_play(lua_State* L) {
+    int index = luaL_checknumber(L, 1) - 1;
+    if (index < 0 || index >= MAX_AUDIO_BUFFER_CHANNELS) {
+        luaL_error(L, "Invalid audio instance");
+        return 1;
+    }
+    AudioBuffer* bf = &(_audio.buffers[index]);
+    if (bf->loaded) bf->playing = 1;
+    return 0;
+}
+
+static int l_poti_audio_pause(lua_State* L) {
+    int index = luaL_checknumber(L, 1) - 1;
+    if (index < 0 || index >= MAX_AUDIO_BUFFER_CHANNELS) {
+        luaL_error(L, "Invalid audio instance");
+        return 1;
+    }
+    AudioBuffer* bf = &(_audio.buffers[index]);
+    if (bf->loaded) bf->playing = 0;
+    return 0;
+}
+
+static int l_poti_audio_stop(lua_State* L) {
+    int index = luaL_checknumber(L, 1) - 1;
+    if (index < 0 || index >= MAX_AUDIO_BUFFER_CHANNELS) {
+        luaL_error(L, "Invalid audio instance");
+        return 1;
+    }
+    AudioBuffer* bf = &(_audio.buffers[index]);
+    if (bf->loaded) {
+        bf->loaded = 0;
+        bf->playing = 0;
+    }
+    return 0;
+}
+
+/*******************
+ * AudioData       *
+ *******************/
+
 static int l_poti_audio__play(lua_State* L) {
-    //Audio* audio = luaL_checkudata(L, 1, AUDIO_META);
     AudioData* audio = luaL_checkudata(L, 1, AUDIO_META);
-    i32 i;
+    int i;
     for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
-	    if (_audio.buffers[i].loaded) break;
+        if (!_audio.buffers[i].loaded) break;
     }
     if (i == MAX_AUDIO_BUFFER_CHANNELS) {
-		lua_pushstring(L, "Audio buffers limit reached\n");
-		lua_error(L);
+        luaL_error(L, "Audio buffers limit reached");
 		return 1;
     }
 
     AudioBuffer* buffer = &_audio.buffers[i];
     ma_decoder_config dec_config = ma_decoder_config_init(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS, AUDIO_DEVICE_SAMPLE_RATE);
-    // AudioData *a_data = &(audio->data);
     memcpy(&(buffer->data), audio, sizeof(AudioData));
-    // buffer->usage = a_data->usage;
-    // buffer->size = a_data->size;
     ma_result result;
+    buffer->offset = 0;
     if (audio->usage == AUDIO_STREAM) {
-        buffer->offset = 0;
         result = ma_decoder_init_memory(audio->data, audio->size, &dec_config, &buffer->decoder);
         ma_decoder_seek_to_pcm_frame(&buffer->decoder, 0);
     } else {
@@ -268,32 +295,95 @@ static int l_poti_audio__play(lua_State* L) {
     buffer->loaded = 1;
     buffer->playing = 1;
 
-    lua_pushinteger(L, i);
+    lua_pushinteger(L, i+1);
     return 1;
 }
 
+static int l_poti_audio__play_all(lua_State* L) {
+    AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
+    int id = ad->id;
+    for (int i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        AudioBuffer* b = &(_audio.buffers[i]);
+        int paused = b->loaded && !b->playing;
+        if (b->id == id && paused) {
+            b->playing = 1;
+        }
+    }
+    return 0;
+}
+
 static int l_poti_audio__stop(lua_State* L) {
+    AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
+    int id = ad->id;
+
+    for (int i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        AudioBuffer* b = &(_audio.buffers[i]);
+        int playing = b->loaded && b->playing;
+        if (playing && b->id == id) {
+            b->playing = 0;
+            b->loaded = 0;
+        }
+    }
     return 0;
 }
 
 static int l_poti_audio__pause(lua_State* L) {
+    AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
+    int id = ad->id;
+    for (int i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        AudioBuffer* b = &(_audio.buffers[i]);
+        int playing = b->loaded && b->playing;
+        if (playing && b->id == id) {
+            b->playing = 0;
+        }
+    }
 	return 1;
 }
 
 static int l_poti_audio__playing(lua_State* L) {
-	lua_pushboolean(L, 1);
+    AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
+    int id = ad->id;
+    for (int i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        AudioBuffer* b = &(_audio.buffers[i]);
+        int playing = b->loaded && b->playing;
+        if (playing && b->id == id) {
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+    }
+    lua_pushboolean(L, 0);
 	return 1;
 }
 
-static int l_poti_audio__volume(lua_State* L) { return 0; }
+static int l_poti_audio__volume(lua_State* L) {
+    AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
+    float volume = luaL_checknumber(L, 2);
+    ad->volume = volume;
+    return 0;
+}
 
-static int l_poti_audio__pitch(lua_State* L) { return 0; }
+static int l_poti_audio__pitch(lua_State* L) {
+    AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
+    float pitch = luaL_checknumber(L, 2);
+    ad->pitch = pitch;
+    return 0;
+}
 
-int l_poti_audio__gc(lua_State* L) { return 0; }
+int l_poti_audio__gc(lua_State* L) {
+    AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
+    int id = ad->id;
+    for (int i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
+        AudioBuffer* b = &(_audio.buffers[i]);
+        if (b->loaded && b->id == id) b->loaded = 0;
+    }
+    free(ad->data);
+    return 0;
+}
 
 static int l_audio_meta(lua_State* L) {
     luaL_Reg meta[] = {
         {"play", l_poti_audio__play},
+        {"play_all", l_poti_audio__play_all},
         {"stop", l_poti_audio__stop},
         {"pause", l_poti_audio__pause},
         {"playing", l_poti_audio__playing},
@@ -309,13 +399,19 @@ static int l_audio_meta(lua_State* L) {
 	return 1;
 }
 
+/**************
+ *  AudioLib  *
+ **************/
+
 int luaopen_audio(lua_State* L) {
     luaL_Reg reg[] = {
 		{"init", l_poti_audio_init},
 		{"deinit", l_poti_audio_deinit},
 		{"load_audio", l_poti_audio_load_audio},
 		{"set_volume", l_poti_audio_set_volume},
-		// {"play", l_poti_audio_play},
+        {"play", l_poti_audio_play},
+        {"pause", l_poti_audio_pause},
+        {"stop", l_poti_audio_stop},
 		{NULL, NULL}
     };
     luaL_newlib(L, reg);
@@ -443,7 +539,7 @@ void s_audio_callback(ma_device* device, void* output, const void* input, ma_uin
     i32 i;
     for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
         AudioBuffer* buffer = &(_audio.buffers[i]);
-	AudioData* data = &(buffer->data);
+        AudioData* data = &(buffer->data);
         if (buffer->playing && buffer->loaded) {
             u32 frames_read = s_read_and_mix_pcm_frames(buffer, out, frame_count);
             if (frames_read < frame_count) {

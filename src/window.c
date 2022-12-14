@@ -23,6 +23,12 @@ int l_poti_window_init(lua_State* L) {
     lua_pop(L, 1);
     lua_getfield(L, -1, "fullscreen");
     if (lua_toboolean(L, -1)) window_flags |= SDL_WINDOW_FULLSCREEN;
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "borderless");
+    if (lua_toboolean(L, -1)) window_flags |= SDL_WINDOW_BORDERLESS;
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "always_on_top");
+    if (lua_toboolean(L, -1)) window_flags |= SDL_WINDOW_ALWAYS_ON_TOP;
     lua_pop(L, 2);
 #else
     const char* title = "poti "POTI_VER;
@@ -32,11 +38,6 @@ int l_poti_window_init(lua_State* L) {
     i32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
 #endif
     _window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, window_flags);
-    // register window in context
-    /*lua_rawgetp(L, LUA_REGISTRYINDEX, &l_context_reg);
-    lua_pushlightuserdata(L, _window);
-    lua_setfield(L, -2, "window");*/
-
     lua_pushlightuserdata(L, _window);
     return 1;
 }
@@ -193,6 +194,7 @@ static int l_poti_window_simple_message_box(lua_State *L) {
             break;
         }
     }
+    if (flags == 0) return luaL_argerror(L, 1, "Invalid message box type");
     SDL_ShowSimpleMessageBox(flags, title, message, _window);
 
     return 0;

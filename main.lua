@@ -2,11 +2,13 @@ local x = 0
 local time = 0
 local played = false
 
+local norm_pal = {}
 local curr_pal = {}
 
 function set_palette(pal)
+    curr_pal = pal
     for i,t in ipairs(pal) do
-        curr_pal[i] = { t[1] / 255, t[2] / 255, t[3] / 255, t[4] / 255 }
+        norm_pal[i] = { t[1] / 255, t[2] / 255, t[3] / 255, t[4] / 255 }
     end
 end
 
@@ -15,32 +17,32 @@ function poti.load(args)
     print(args[2])
     print(poti.filesystem.basepath())
     shader = poti.graphics.new_shader(
-        [[
-            vec4 position(vec2 pos, mat4 world, mat4 modelview) {
-                return world * modelview * vec4(pos.x, pos.y, 0, 1);
-            }
-        ]],
-        [[
-            uniform vec4 palette[4];
-            vec4 pixel(vec4 color, vec2 uv, sampler2D tex) {
-                float dist = 1000000.0;
-                vec4 cc = color * texture(tex, uv);
-                int index = 0;
-                for (int i = 0; i < 4; i++) {
-                    float rr, gg, bb;
-                    rr = (cc.r - palette[i].r) * (cc.r - palette[i].r);
-                    gg = (cc.g - palette[i].g) * (cc.g - palette[i].g);
-                    bb = (cc.b - palette[i].b) * (cc.b - palette[i].b);
-                    float d = rr + gg + bb;
-                    if (d <= dist) {
-                        dist = d;
-                        index = i;
-                    }
-                }
-		vec4 c = vec4(palette[index].r, palette[index].g, palette[index].b, palette[index].a);
-                return vec4(c.r, c.g, c.b, cc.a);
-            }
-        ]]
+[[
+vec4 position(vec2 pos, mat4 world, mat4 modelview) {
+    return world * modelview * vec4(pos, 0, 1);
+}
+]],
+[[
+uniform vec4 palette[4];
+vec4 pixel(vec4 color, vec2 uv, sampler2D tex) {
+    float dist = 1000000.0;
+    vec4 cc = color * texture(tex, uv);
+    int index = 0;
+    for (int i = 0; i < 4; i++) {
+        float rr, gg, bb;
+        rr = (cc.r - palette[i].r) * (cc.r - palette[i].r);
+        gg = (cc.g - palette[i].g) * (cc.g - palette[i].g);
+        bb = (cc.b - palette[i].b) * (cc.b - palette[i].b);
+        float d = rr + gg + bb;
+        if (d <= dist) {
+            dist = d;
+            index = i;
+        }
+    }
+    vec4 c = vec4(palette[index].r, palette[index].g, palette[index].b, palette[index].a);
+    return vec4(c.r, c.g, c.b, cc.a);
+}
+]]
     )
     -- target = poti.Texture(160, 95, "target")
     target = poti.graphics.new_texture(160, 95, "target")
@@ -88,7 +90,8 @@ function poti.draw()
     poti.graphics.set_color(255, 255, 255)
     poti.graphics.set_target(target)
     local p = curr_pal[3]
-    poti.graphics.clear(175, 175, 175)
+    poti.graphics.clear(table.unpack(curr_pal[3]))
+    -- poti.graphics.clear(175, 175, 175)
     -- tex:draw()
     poti.graphics.circle(64+x, 64, 12, 16)
     poti.graphics.set_draw("line")
@@ -113,8 +116,9 @@ function poti.draw()
 
     poti.graphics.set_target()
     if c then poti.graphics.set_shader(shader) end
-    shader:send("palette", curr_pal[1], curr_pal[2], curr_pal[3], curr_pal[4])
+    shader:send("palette", table.unpack(norm_pal))
     poti.graphics.set_color(255, 255, 255)
+    -- target:draw({0, 0, 96, 32}, {0, 0, 96*2, 64}, {0, 0})
     target:draw(nil, {0, 0, 640, 380})
     -- tex:draw()
     poti.graphics.set_shader()

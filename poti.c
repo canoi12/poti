@@ -32,7 +32,7 @@ static int l_poti_running(lua_State* L) {
     lua_pushboolean(L, _running);
     return 1;
 }
-
+#if 0
 static int l_poti_error(lua_State* L) {
     const i8* msg = luaL_checkstring(L, 1);
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_error_reg);
@@ -40,11 +40,11 @@ static int l_poti_error(lua_State* L) {
     lua_pcall(L, 1, 0, 0);
     return 0;
 }
-
+#endif
 static int l_poti_set_func(lua_State* L) {
     const i8* func = luaL_checkstring(L, 1);
     if (lua_type(L, 2) != LUA_TFUNCTION) {
-		luaL_error(L, "poti step must be a function");
+		luaL_error(L, "invalid arg #2, must be a function");
 		return 1;
     }
     lua_pushvalue(L, -1);
@@ -59,7 +59,7 @@ int luaopen_poti(lua_State* L) {
     luaL_Reg reg[] = {
         {"version", l_poti_version},
         {"running", l_poti_running},
-        {"error", l_poti_error},
+        // {"error", l_poti_error},
         {"set_func", l_poti_set_func},
         {"gl", NULL},
         {NULL, NULL}
@@ -185,7 +185,11 @@ int poti_init(int argc, char** argv) {
 static void poti_step(void) {
     lua_State* L = _L;
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_step_reg);
-    lua_pcall(L, 0, 0, 0);
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        const char* error_buf = lua_tostring(L, -1);
+        fprintf(stderr, "Failed to call step function: %s", error_buf);
+        exit(EXIT_FAILURE);
+    }
     SDL_GL_SwapWindow(_window);
 }
 
@@ -204,6 +208,9 @@ int poti_quit(void) {
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
 		const i8* error_buf = lua_tostring(L, -1);
 		fprintf(stderr, "Failed to call lua deinit function: %s\n", error_buf);
+        if (_gl_ctx) SDL_GL_DeleteContext(_gl_ctx);
+        if (_window) SDL_DestroyWindow(_window);
+        SDL_Quit();
 		exit(EXIT_FAILURE);
     }
     lua_close(_L);

@@ -23,13 +23,13 @@ static int _shader_factory_lua;
 
 typedef struct Vertex Vertex;
 
-struct gl_info_t {
+struct GLInfo {
     u8 major, minor;
     u16 glsl;
     u16 es; 
 };
 
-static struct gl_info_t s_gl_info;
+static struct GLInfo s_gl_info;
 
 struct Texture {
     u32 fbo;
@@ -41,14 +41,14 @@ struct Texture {
 
 struct Font {
     struct {
-	// advance x and y
-	i32 ax, ay;
-	//bitmap width and rows
-	i32 bw, bh;
-	// bitmap left and top
-	i32 bl, bt;
-	// x offset of glyph
-	i32 tx;
+        // advance x and y
+        i32 ax, ay;
+        //bitmap width and rows
+        i32 bw, bh;
+        // bitmap left and top
+        i32 bl, bt;
+        // x offset of glyph
+        i32 tx;
     } c[256];
 
     Texture *tex;
@@ -83,13 +83,20 @@ struct Vertex {
     void* data;
 };
 
+#define MATRIX_STACK_SIZE 256
+
 struct Render {
     u32 clear_flags;
     u32 draw_calls;
     i8 draw_mode;
-    f32 color[4];
+    vec4 color;
 
-    mat4x4 world, modelview;
+    struct {
+        mat4x4 stack[MATRIX_STACK_SIZE];
+        int top;
+        mat4x4 world;
+        mat4x4* ptr;
+    } matrix;
 
     Shader* def_shader;
     Vertex def_vertex;
@@ -158,7 +165,7 @@ const i8* _frag_source =
 #endif
 
 static int l_poti_graphics_init(lua_State* L) {
-    memset(&s_gl_info, 0, sizeof(struct gl_info_t));
+    memset(&s_gl_info, 0, sizeof(struct GLInfo));
     memset(RENDER(), 0, sizeof(struct Render));
 
     struct Render* r = &_render;
@@ -180,9 +187,8 @@ static int l_poti_graphics_init(lua_State* L) {
 #else
     profile = SDL_GL_CONTEXT_PROFILE_COMPATIBILITY;
     lua_getfield(L, -1, "es");
-    if (!lua_isnil(L, -1) && lua_toboolean(L, -1)) {
-	profile = SDL_GL_CONTEXT_PROFILE_ES;
-    }
+    if (!lua_isnil(L, -1) && lua_toboolean(L, -1))
+        profile = SDL_GL_CONTEXT_PROFILE_ES;
     lua_pop(L, 1);
     lua_getfield(L, -1, "major");
     major = luaL_optinteger(L, -1, 3);
@@ -198,8 +204,8 @@ static int l_poti_graphics_init(lua_State* L) {
     SDL_GL_MakeCurrent(window, ctx);
 #if !defined(__EMSCRIPTEN__)
     if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
-	fprintf(stderr, "failed to initialize OpenGL context\n");
-	exit(EXIT_FAILURE);
+        fprintf(stderr, "failed to initialize OpenGL context\n");
+        exit(EXIT_FAILURE);
     }
 #endif
     lua_pop(L, 1);
@@ -215,26 +221,26 @@ static int l_poti_graphics_init(lua_State* L) {
         "OpenGL ES ",
         NULL,
     };
-    struct gl_info_t *info = &s_gl_info;
+    struct GLInfo *info = &s_gl_info;
     info->es = 0;
     i8* ver = (i8*)version;
     for (u32 i = 0; prefixes[i] != NULL; i++) {
-	if (strncmp(ver, prefixes[i], strlen(prefixes[i])) == 0) {
-	    ver += strlen(prefixes[i]);
-	    info->es = 1;
-	    break;
-	}
+        if (strncmp(ver, prefixes[i], strlen(prefixes[i])) == 0) {
+            ver += strlen(prefixes[i]);
+            info->es = 1;
+            break;
+        }
     }
     info->major = ver[0] - '0';
     info->minor = ver[2] - '0';
     if (info->es) {
-	info->glsl = 100;
-	if (info->major == 3) {
-	    info->glsl = info->major * 100 + info->minor * 10;
-	}
+        info->glsl = 100;
+        if (info->major == 3) {
+            info->glsl = info->major * 100 + info->minor * 10;
+        }
     } else {
-	float fglsl = atof((const i8*)glsl);
-	info->glsl = 100 * fglsl;
+        float fglsl = atof((const i8*)glsl);
+        info->glsl = 100 * fglsl;
     }
 
     fprintf(stderr, "GL: { ver: %d.%d, glsl: %d, es: %s }\n", info->major, info->minor, info->glsl, info->es ? "true" : "false");
@@ -243,23 +249,23 @@ static int l_poti_graphics_init(lua_State* L) {
 
 #ifndef NO_EMBED
     if (luaL_dostring(L, _embed_shader_factory_lua) != LUA_OK) {
-	const i8* error_buf = lua_tostring(L, -1);
-	fprintf(stderr, "Failed to init shader factory: %s\n", error_buf);
-	exit(EXIT_FAILURE);
+        const i8* error_buf = lua_tostring(L, -1);
+        fprintf(stderr, "Failed to init shader factory: %s\n", error_buf);
+        exit(EXIT_FAILURE);
     }
 #else
     if (luaL_dofile(L, "embed/shader_factory.lua") != LUA_OK) {
-	const i8* error_buf = lua_tostring(L, -1);
-	fprintf(stderr, "Failed to init shader factory: %s\n", error_buf);
-	exit(EXIT_FAILURE);
+        const i8* error_buf = lua_tostring(L, -1);
+        fprintf(stderr, "Failed to init shader factory: %s\n", error_buf);
+        exit(EXIT_FAILURE);
     }
 #endif
     lua_pushinteger(L, info->glsl);
     lua_pushboolean(L, info->es);
     if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
-	const i8* error_buf = lua_tostring(L, -1);
-	fprintf(stderr, "Failed to setup shader factory: %s\n", error_buf);
-	exit(EXIT_FAILURE);
+        const i8* error_buf = lua_tostring(L, -1);
+        fprintf(stderr, "Failed to setup shader factory: %s\n", error_buf);
+        exit(EXIT_FAILURE);
     }
 #ifndef NO_EMBED
     lua_rawsetp(L, LUA_REGISTRYINDEX, _embed_shader_factory_lua);
@@ -275,8 +281,11 @@ static int l_poti_graphics_init(lua_State* L) {
     target->width = ww;
     target->height = hh;
     glViewport(0, 0, ww, hh);
-    mat4x4_ortho(RENDER()->world, 0, ww, hh, 0, -1, 1);
-    mat4x4_identity(RENDER()->modelview);
+    mat4x4_identity(RENDER()->matrix.world);
+    mat4x4_ortho(RENDER()->matrix.world, 0, ww, hh, 0, -1, 1);
+    RENDER()->matrix.ptr = &(RENDER()->matrix.stack[0]);
+    RENDER()->matrix.top = 0;
+    mat4x4_identity(*(RENDER()->matrix.ptr));
 
     RENDER()->target = target;
 
@@ -389,8 +398,7 @@ static int l_poti_graphics_set_draw(lua_State* L) {
     if (!strcmp(s_mode, "line")) mode = POTI_LINE;
     else if (!strcmp(s_mode, "fill")) mode = POTI_FILL;
     else {
-        luaL_error(L, "invalid draw mode: %s", s_mode);
-        return 1;
+        return luaL_error(L, "invalid draw mode: %s", s_mode);
     }
     set_draw_mode(mode);
     return 0;
@@ -420,10 +428,12 @@ static int l_poti_graphics_point(lua_State* L) {
     f32 vertices[] = {
 	x, y, c[0], c[1], c[2], c[3], 0.f, 0.f
     };
-    Texture* tex = RENDER()->white;
-    glBindTexture(GL_TEXTURE_2D, tex->handle);
+    // Texture* tex = RENDER()->tex;
+    Texture* white = RENDER()->white;
+    glBindTexture(GL_TEXTURE_2D, white->handle);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(VertexFormat), vertices);
     glDrawArrays(GL_POINTS, 0, 1);
+    // if (tex && tex != white) glBindTexture(GL_TEXTURE_2D, tex->handle);
     return 0;
 }
 
@@ -562,8 +572,8 @@ static int l_poti_graphics_circle(lua_State *L) {
 
 typedef void(*DrawRect)(SDL_Rect*);
 static void push_filled_rect(SDL_Rect *r) {
-    float *c = RENDER()->color;
-    float vertices[] = {
+    f32 *c = RENDER()->color;
+    f32 vertices[] = {
         r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
         r->x + r->w, r->y, c[0], c[1], c[2], c[3], 1.f, 0.f,
         r->x + r->w, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
@@ -579,8 +589,8 @@ static void push_filled_rect(SDL_Rect *r) {
     push_vertices(VERTEX(), 6, v);
 }
 static void push_lined_rect(SDL_Rect *r) {
-    float *c = RENDER()->color;
-    float vertices[] = {
+    f32 *c = RENDER()->color;
+    f32 vertices[] = {
         r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
         r->x + r->w, r->y, c[0], c[1], c[2], c[3], 1.f, 0.f,
 
@@ -620,10 +630,10 @@ static int l_poti_graphics_rectangle(lua_State *L) {
     return 0;
 }
 
-typedef void(*DrawTriangle)(float, float, float, float, float, float);
-static void push_filled_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
-    float *c = RENDER()->color;
-    float vertices[] = {
+typedef void(*DrawTriangle)(f32, f32, f32, f32, f32, f32);
+static void push_filled_triangle(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2) {
+    f32 *c = RENDER()->color;
+    f32 vertices[] = {
         x0, y0, c[0], c[1], c[2], c[3], 0.5f, 0.f,
         x1, y1, c[0], c[1], c[2], c[3], 0.f, 1.f,
         x2, y2, c[0], c[1], c[2], c[3], 1.f, 1.f
@@ -633,9 +643,9 @@ static void push_filled_triangle(float x0, float y0, float x1, float y1, float x
     push_vertices(VERTEX(), 3, v);
 }
 
-static void push_lined_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
-    float *c = RENDER()->color;
-    float vertices[] = {
+static void push_lined_triangle(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2) {
+    f32 *c = RENDER()->color;
+    f32 vertices[] = {
         x0, y0, c[0], c[1], c[2], c[3], 0.5f, 0.f,
         x1, y1, c[0], c[1], c[2], c[3], 0.f, 1.f,
 
@@ -651,7 +661,7 @@ static void push_lined_triangle(float x0, float y0, float x1, float y1, float x2
 
 static int l_poti_graphics_triangle(lua_State *L) {
 
-    float points[6];
+    f32 points[6];
 
     for (int i = 0; i < 6; i++)
         points[i] = luaL_checknumber(L, i+1);
@@ -704,13 +714,13 @@ static void char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_po
         *y += font->height;
     }
 
-    float x2 = *x + font->c[c].bl;
-    float y2 = *y + font->c[c].bt;
+    f32 x2 = *x + font->c[c].bl;
+    f32 y2 = *y + font->c[c].bt;
 
-    float s0 = font->c[c].tx;
-    float t0 = 0;
-    int s1 = font->c[c].bw;
-    int t1 = font->c[c].bh;
+    f32 s0 = font->c[c].tx;
+    f32 t0 = 0;
+    i32 s1 = font->c[c].bw;
+    i32 t1 = font->c[c].bh;
 
     *x += font->c[c].ax;
     *y += font->c[c].ay;
@@ -736,8 +746,8 @@ static int l_poti_graphics_print(lua_State* L) {
     w = font->tex->width;
     h = font->tex->height;
     set_texture(font->tex);
-    while (*p) {
-        int codepoint;
+    while (*p != 0) {
+        i32 codepoint;
         p = utf8_codepoint(p, &codepoint);
         SDL_Rect src, dest;
         SDL_Point pos;
@@ -746,6 +756,7 @@ static int l_poti_graphics_print(lua_State* L) {
         dest.y = y + pos.y;
         dest.w = src.w;
         dest.h = src.h;
+        // fprintf(stderr, "%c:%d", *p, *p);
 
         SDL_FRect t;
         t.x = src.x / w;
@@ -761,8 +772,9 @@ static int l_poti_graphics_print(lua_State* L) {
             dest.x, dest.y + dest.h, c[0], c[1], c[2], c[3], t.x, t.y + t.h,
             dest.x + dest.w, dest.y + dest.h, c[0], c[1], c[2], c[3], t.x + t.w, t.y + t.h,
         };
-	push_vertices(VERTEX(), 6, (VertexFormat*)letter);
+        push_vertices(VERTEX(), 6, (VertexFormat*)letter);
     }
+    // fprintf(stderr, "\n");
     return 0;
 }
 
@@ -775,7 +787,7 @@ static int l_poti_graphics_swap(lua_State* L) {
  *******************/
 
 static int l_poti_graphics_identity(lua_State* L) {
-    mat4x4_identity(RENDER()->modelview);
+    mat4x4_identity(*(RENDER()->matrix.ptr));
     return 0;
 }
 
@@ -785,7 +797,7 @@ static int l_poti_graphics_translate(lua_State* L) {
     for (i32 i = 0; i < top; i++) {
 	pos[i] = luaL_checknumber(L, i+1);
     }
-    mat4x4_translate_in_place(RENDER()->modelview, pos[0], pos[1], pos[2]);
+    mat4x4_translate_in_place(*(RENDER()->matrix.ptr), pos[0], pos[1], pos[2]);
     return 0;
 }
 
@@ -793,15 +805,23 @@ static int l_poti_graphics_scale(lua_State* L) {
     f32 pos[3] = {0.f, 0.f, 0.f};
     i32 top = lua_gettop(L);
     for (i32 i = 0; i < top; i++) {
-	pos[i] = luaL_checknumber(L, i+1);
+        pos[i] = luaL_checknumber(L, i+1);
     }
-    mat4x4_scale_aniso(RENDER()->modelview, RENDER()->modelview, pos[0], pos[1], pos[2]);
+    mat4x4_scale_aniso(*(RENDER()->matrix.ptr), *(RENDER()->matrix.ptr), pos[0], pos[1], pos[2]);
     return 0;
 }
 
 static int l_poti_graphics_rotate(lua_State* L) {
     f32 angle = luaL_checknumber(L, 1);
-    mat4x4_rotate_Z(RENDER()->modelview, RENDER()->modelview, angle);
+    mat4x4_rotate_Z(*(RENDER()->matrix.ptr), *(RENDER()->matrix.ptr), angle);
+    return 0;
+}
+
+static int l_poti_graphics_push(lua_State* L) {
+    int top = RENDER()->matrix.top;
+    if (top + 1 >= MATRIX_STACK_SIZE) {
+        return luaL_error(L, "Matrix stack overflow");
+    }
     return 0;
 }
 
@@ -810,6 +830,7 @@ static int l_poti_graphics_rotate(lua_State* L) {
  *******************/
 
 static int s_init_texture(Texture *tex, int target, int w, int h, int format, void *data) {
+    if (!tex) return 0;
     glGenTextures(1, &tex->handle);
     i32 curr_tex = 0;
     if (RENDER()->tex) curr_tex = RENDER()->tex->handle;
@@ -822,7 +843,6 @@ static int s_init_texture(Texture *tex, int target, int w, int h, int format, vo
     tex->filter[1] = GL_NEAREST;
     tex->wrap[0] = GL_CLAMP_TO_EDGE;
     tex->wrap[1] = GL_CLAMP_TO_EDGE;
-
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, tex->filter[0]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, tex->filter[1]);
@@ -852,15 +872,10 @@ static int s_init_texture(Texture *tex, int target, int w, int h, int format, vo
 }
 
 static int s_textype_from_string(lua_State *L, const char *name) {
-    int usage = SDL_TEXTUREACCESS_STATIC;
+    int usage = -1;
     if (!strcmp(name, "static")) usage = SDL_TEXTUREACCESS_STATIC;
     else if (!strcmp(name, "stream")) usage = SDL_TEXTUREACCESS_STREAMING;
     else if (!strcmp(name, "target")) usage = SDL_TEXTUREACCESS_TARGET;
-    else {
-        lua_pushstring(L, "Invalid texture usage");
-        return -1;
-    }
-
     return usage;
 }
 
@@ -878,6 +893,7 @@ int l_poti_graphics_new_texture(lua_State *L) {
     if (top > 3) data = lua_touserdata(L, 4);
 
     i32 usage = s_textype_from_string(L, s_usage);
+    if (usage < 0) return luaL_argerror(L, 3, "Invalid texture usage");
     s_init_texture(tex, usage, w, h, GL_RGBA, data);
     // s_texture_from_size(L, tex);
     return 1;
@@ -890,20 +906,18 @@ static int l_poti_graphics_load_texture(lua_State* L) {
     tex->fbo = 0;
 
     size_t size;
-    const char *path = luaL_checklstring(L, 1, &size);
+    const i8* path = luaL_checklstring(L, 1, &size);
 
     int w, h, format, req_format;
     req_format = STBI_rgb_alpha;
 
     size_t fsize;
     u8* img = (u8*)poti_fs_read_file(path, &fsize);
-    if (!img) {
-	luaL_error(L, "failed to open image: %s", path);
-	return 1;
-    }
+    if (!img) return luaL_error(L, "failed to open image: %s", path);
 
     u8 *pixels = stbi_load_from_memory(img, fsize, &w, &h, &format, req_format);
-    int pixel_format = GL_RGB;
+    if (!pixels) return luaL_error(L, "file %s is not a valid image", path);
+    i32 pixel_format = GL_RGB;
     switch (req_format) {
         case STBI_rgb: pixel_format = GL_RGB; break;
         case STBI_rgb_alpha: pixel_format = GL_RGBA; break;
@@ -911,11 +925,7 @@ static int l_poti_graphics_load_texture(lua_State* L) {
     s_init_texture(tex, 0, w, h, pixel_format, pixels);
     stbi_image_free(pixels);
     free(img);
-    if (!tex->handle) {
-        lua_pushstring(L, "Failed to create GL texture");
-        lua_error(L);
-        return 1;
-    }
+    if (!tex->handle) return luaL_error(L, "Failed to create GL texture");
 
     return 1;
 #else
@@ -991,31 +1001,20 @@ static int l_poti_texture__draw(lua_State* L) {
     SDL_Rect s = {0, 0, w, h};
     get_rect_from_table(L, index++, &s);
 
-    f32 uv[4];
-    uv[0] = (f32)s.x / w;
-    uv[1] = (f32)s.y / h;
-    uv[2] = (f32)s.w / w;
-    uv[3] = (f32)s.h / h;
+    vec2 u, v;
+    u[0] = (f32)s.x / w;
+    u[1] = ((f32)s.x + s.w) / w;
+
+    v[0] = (f32)s.y / h;
+    v[1] = ((f32)s.y + s.h) / h;
 
     SDL_Rect d = { 0, 0, s.w, s.h };
     get_rect_from_table(L, index++, &d);
 
-    float *c = RENDER()->color;
-    vec2 tex_y = {uv[1], uv[1] + uv[3]};
     if (tex->fbo != 0) {
-        tex_y[0] = 1.f - uv[1];
-        tex_y[1] = (1.f - uv[1]) - uv[3];
+        v[0] = 1.f - v[0];
+        v[1] = 1.f - v[1];
     }
-
-    float vertices[] = {
-        d.x, d.y, c[0], c[1], c[2], c[3], uv[0], tex_y[0],
-        d.x + d.w, d.y, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[0],
-        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[1],
-
-        d.x, d.y, c[0], c[1], c[2], c[3], uv[0], tex_y[0],
-        d.x, d.y + d.h, c[0], c[1], c[2], c[3], uv[0], tex_y[1],
-        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[1],
-    };
 
     if (index > 3) {
         //float angle = luaL_optnumber(L, index++, 0);
@@ -1025,25 +1024,74 @@ static int l_poti_texture__draw(lua_State* L) {
 
         int flip = SDL_FLIP_NONE;
         get_flip_from_table(L, index++, &flip);
+        if (flip & SDL_FLIP_VERTICAL) {
+            f32 aux = v[0];
+            v[0] = v[1];
+            v[1] = aux;
+        }
+        if (flip & SDL_FLIP_HORIZONTAL) {
+            f32 aux = u[0];
+            u[0] = u[1];
+            u[1] = aux;
+        }
 
         // SDL_RenderCopyEx(poti()->render, *tex, &s, &d, angle, &origin, flip);
-    } else {
-        // SDL_RenderCopy(poti()->render, *tex, &s, &d);
-    }
+    } 
+    float *c = RENDER()->color;
+#if 1
+    float vertices[] = {
+        d.x, d.y, c[0], c[1], c[2], c[3], u[0], v[0],
+        d.x + d.w, d.y, c[0], c[1], c[2], c[3], u[1], v[0],
+        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], u[1], v[1],
+
+        d.x, d.y, c[0], c[1], c[2], c[3], u[0], v[0],
+        d.x, d.y + d.h, c[0], c[1], c[2], c[3], u[0], v[1],
+        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], u[1], v[1],
+    };
+#else
+    float vertices[] = {
+        d.x, d.y, c[0], c[1], c[2], c[3], uv[0], tex_y[0],
+        d.x + d.w, d.y, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[0],
+        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[1],
+
+        d.x, d.y, c[0], c[1], c[2], c[3], uv[0], tex_y[0],
+        d.x, d.y + d.h, c[0], c[1], c[2], c[3], uv[0], tex_y[1],
+        d.x + d.w, d.y + d.h, c[0], c[1], c[2], c[3], uv[0] + uv[2], tex_y[1],
+    };
+#endif
     push_vertices(VERTEX(), 6, (VertexFormat*)vertices);
 
     return 0;
 }
 
+static int l_poti_texture__width(lua_State* L) {
+    Texture* tex = luaL_checkudata(L, 1, TEXTURE_META);
+    lua_pushnumber(L, tex->width);
+    return 1;
+}
+
+static int l_poti_texture__height(lua_State* L) {
+    Texture* tex = luaL_checkudata(L, 1, TEXTURE_META);
+    lua_pushnumber(L, tex->height);
+    return 1;
+}
+
+static int l_poti_texture__size(lua_State* L) {
+    Texture* tex = luaL_checkudata(L, 1, TEXTURE_META);
+    lua_pushnumber(L, tex->width);
+    lua_pushnumber(L, tex->height);
+    return 2;
+}
+
 static int l_texture_meta(lua_State* L) {
     luaL_Reg reg[] = {
         {"draw", l_poti_texture__draw},
-#if 0
-        {"filter", NULL},
-        {"wrap", NULL},
         {"width", l_poti_texture__width},
         {"height", l_poti_texture__height},
         {"size", l_poti_texture__size},
+#if 0
+        {"filter", NULL},
+        {"wrap", NULL},
         {"__gc", l_poti_texture__gc},
 #endif
         {NULL, NULL}
@@ -1167,6 +1215,10 @@ int l_poti_graphics_new_shader(lua_State* L) {
     return 1;
 }
 
+static int l_poti_graphics_load_shader(lua_State* L) {
+    return 0;
+}
+
 static int l_poti_shader__location(lua_State *L) {
     Shader *shader = luaL_checkudata(L, 1, SHADER_META);
     const char *name = luaL_checkstring(L, 2);
@@ -1191,7 +1243,6 @@ static int s_send_shader_vector(lua_State *L, Shader *s, i32 loc) {
     int count = top - 2;
 
     int len = lua_rawlen(L, 3);
-    PFNGLUNIFORM2FVPROC glUniformfv = NULL;
     PFNGLUNIFORM2FVPROC fns[] = {
         glUniform1fv,
         glUniform2fv,
@@ -1199,17 +1250,18 @@ static int s_send_shader_vector(lua_State *L, Shader *s, i32 loc) {
         glUniform4fv
     };
 
-    // fprintf(stderr, "count: %d, len: %d\n", count, len);
-    float v[count*len];
-
-    if ((len - 1) >= 0 && (len - 1) <= 3) glUniformfv = fns[len-1];
-    else {
-        lua_pushstring(L, "invalid vector size");
-        lua_error(L);
-        return 0;
+    
+    // vec1 to vec4
+    if (len < 1 || len > 4) {
+        luaL_error(L, "invalid vector size");
+        return 1;
     }
+
+    PFNGLUNIFORM2FVPROC glUniformfv = fns[len-1];
+    float v[count*len];
     int i, j;
     float *pv = v;
+
     for (i = 0; i < count; i++) {
         for (j = 0; j < len; j++) {
             lua_pushnumber(L, j+1);
@@ -1277,12 +1329,10 @@ static int l_shader_meta(lua_State* L) {
 }
 
 int luaopen_graphics(lua_State* L) {
-
     luaL_Reg reg[] = {
 		{"init", l_poti_graphics_init},
 		{"deinit", l_poti_graphics_deinit},
-		{"size", l_poti_graphics_size},
-		/* texture */
+		{"size", l_poti_graphics_size}, /* texture */
 		{"new_texture", l_poti_graphics_new_texture},
 		{"load_texture", l_poti_graphics_load_texture},
 		{"set_target", l_poti_graphics_set_target},
@@ -1291,12 +1341,15 @@ int luaopen_graphics(lua_State* L) {
 		{"set_font", NULL},
 		/* shader */
 		{"new_shader", l_poti_graphics_new_shader},
+        {"load_shader", l_poti_graphics_load_shader},
 		{"set_shader", l_poti_graphics_set_shader},
 		/* transform */
 		{"identity", l_poti_graphics_identity},
 		{"translate", l_poti_graphics_translate},
 		{"scale", l_poti_graphics_scale},
 		{"rotate", l_poti_graphics_rotate},
+        {"push", l_poti_graphics_push},
+        {"pop", NULL},
 		/* draw */
 		{"blend_mode", NULL},
 		{"clear_buffer", l_poti_graphics_clear_buffer},
@@ -1368,7 +1421,7 @@ int l_perspective_func(lua_State* L) {
     near = luaL_optnumber(L, 3, -1.f);
     far = luaL_optnumber(L, 4, 1.f);
 
-    mat4x4_ortho(RENDER()->world, 0.f, width, height, 0.f, near, far);
+    mat4x4_ortho(RENDER()->matrix.world, 0.f, width, height, 0.f, near, far);
     return 0;
 }
 
@@ -1429,16 +1482,16 @@ void set_shader(Shader *s) {
         GLint view[4];
         glGetIntegerv(GL_VIEWPORT, view);
 
-	lua_rawgetp(_L, LUA_REGISTRYINDEX, l_perspective_func);
-	lua_pushnumber(_L, view[2]);
-	lua_pushnumber(_L, view[3]);
-	mat4x4_identity(RENDER()->world);
-	if (lua_pcall(_L, 2, 0, 0) != LUA_OK) {
-	    fprintf(stderr, "Failed to call perspective matrix function"); 
-	}
+        lua_rawgetp(_L, LUA_REGISTRYINDEX, l_perspective_func);
+        lua_pushnumber(_L, view[2]);
+        lua_pushnumber(_L, view[3]);
+        mat4x4_identity(RENDER()->matrix.world);
+        if (lua_pcall(_L, 2, 0, 0) != LUA_OK) {
+            fprintf(stderr, "Failed to call perspective matrix function"); 
+        }
 
-        glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *(RENDER()->world));
-        glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, *(RENDER()->modelview));
+        glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *(RENDER()->matrix.world));
+        glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, **(RENDER()->matrix.ptr));
         RENDER()->shader = s;
     }
 }
@@ -1464,20 +1517,20 @@ void set_target(Texture *t) {
 	lua_rawgetp(_L, LUA_REGISTRYINDEX, l_perspective_func);
 	lua_pushnumber(_L, t->width);
 	lua_pushnumber(_L, t->height);
-	mat4x4_identity(RENDER()->world);
+	mat4x4_identity(RENDER()->matrix.world);
 	if (lua_pcall(_L, 2, 0, 0) != LUA_OK) {
 		fprintf(stderr, "Failed to call perspective matrix function"); 
 	}
 
-	glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *(RENDER()->world));
-	glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, *(RENDER()->modelview));
+	glUniformMatrix4fv(s->u_world, 1, GL_FALSE, *(RENDER()->matrix.world));
+	glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, **(RENDER()->matrix.ptr));
 }
 
 void set_draw_mode(u8 draw_mode) {
     if (draw_mode != RENDER()->draw_mode) {
-	draw_vertex(VERTEX());
-	clear_vertex(VERTEX());
-	RENDER()->draw_mode = draw_mode;
+        draw_vertex(VERTEX());
+        clear_vertex(VERTEX());
+        RENDER()->draw_mode = draw_mode;
     }
 }
 
