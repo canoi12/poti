@@ -779,6 +779,7 @@ static int l_poti_graphics_print(lua_State* L) {
 }
 
 static int l_poti_graphics_swap(lua_State* L) {
+    SDL_GL_SwapWindow(_window);
     return 0;
 }
 

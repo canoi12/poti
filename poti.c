@@ -190,7 +190,6 @@ static void poti_step(void) {
         fprintf(stderr, "Failed to call step function: %s", error_buf);
         exit(EXIT_FAILURE);
     }
-    SDL_GL_SwapWindow(_window);
 }
 
 int poti_loop(void) {
