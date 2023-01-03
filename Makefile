@@ -43,7 +43,7 @@ ifeq ($(TARGET), Windows)
 	GEN_CC := $(PREFIX)gcc
 	CFLAGS += -Wall -std=c99
 	INCL += -Iexternal/SDL2/include
-	LFLAGS = -mwindows -lpthread -lmingw32 -Lexternal/SDL2/lib -lSDL2 -lopengl32
+	LFLAGS =-Lexternal/SDL2/lib -Wl,-Bdynamic -lSDL2 -Wl,-Bstatic -mwindows -lpthread -lmingw32 -lopengl32
 	PATH := $(PATH):external/SDL2/bin
 else
 	ifeq ($(TARGET), Web)

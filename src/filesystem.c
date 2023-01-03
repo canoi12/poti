@@ -137,8 +137,12 @@ static int l_poti_filesystem_mkdir(lua_State* L) {
     const char* _rpath = lua_tostring(L, -1);
     lua_pop(L, 1);
 
-	mkdir(_rpath, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-	return 0;
+#ifdef _WIN32
+    mkdir(_rpath);
+#else
+    mkdir(_rpath, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+#endif
+    return 0;
 }
 
 static int l_poti_filesystem_rmdir(lua_State* L) {
@@ -149,8 +153,8 @@ static int l_poti_filesystem_rmdir(lua_State* L) {
     const char* _rpath = lua_tostring(L, -1);
     lua_pop(L, 1);
 
-	rmdir(_rpath);
-	return 0;
+    rmdir(_rpath);
+    return 0;
 }
 
 static int l_poti_filesystem_load(lua_State* L) {
