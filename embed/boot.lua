@@ -69,7 +69,7 @@ function poti.boot()
             if poti[ev] then poti[ev](a,b,c,d,e,f,g) end
         end
 	end
-	local current = poti.timer.tick()	
+	local current = poti.timer.tick()
 	timer.delta = (current - timer.last) / 1000
 	timer.last = current
 	if poti.update then poti.update(timer.delta) end

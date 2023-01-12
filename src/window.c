@@ -129,9 +129,7 @@ static int l_poti_window_resizable(lua_State *L) {
         resizable = lua_toboolean(L, 1);
         SDL_SetWindowResizable(_window, resizable);
     }
-
     lua_pushboolean(L, resizable);
-
     return 1;
 }
 

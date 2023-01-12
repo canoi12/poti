@@ -5,7 +5,7 @@
 
 #define MAX_AUDIO_BUFFER_CHANNELS 256
 
-#define AUDIO_DEVICE_FORMAT ma_format_f32
+#define AUDIO_DEVICE_FORMAT ma_format_s16
 #define AUDIO_DEVICE_CHANNELS 2
 #define AUDIO_DEVICE_SAMPLE_RATE 44100
 
@@ -294,6 +294,7 @@ static int l_poti_audio__play(lua_State* L) {
 
     buffer->loaded = 1;
     buffer->playing = 1;
+    buffer->id = audio->id;
 
     lua_pushinteger(L, i+1);
     return 1;
@@ -485,8 +486,8 @@ int s_register_audio_data(lua_State* L, u8 usage, const char *path) {
 }
 #endif
 
-u32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, f32* output, u32 frames) {
-    f32 temp[4096];
+u32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, i16* output, u32 frames) {
+    i16 temp[4096];
     u32 temp_cap_in_frames = ma_countof(temp) / AUDIO_DEVICE_CHANNELS;
     u32 total_frames_read = 0;
     ma_decoder* decoder = &buffer->decoder;
@@ -533,7 +534,7 @@ u32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, f32* output, u32 frames) {
 }
 
 void s_audio_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
-    f32* out = (f32*)output;
+    i16* out = (i16*)output;
 
     ma_mutex_lock(&(_audio.lock));
     i32 i;

@@ -10,13 +10,18 @@ RELEASE = 0
 USEJIT = 0
 
 LUA_DIR = external/lua/src
+# LUA_DIR = external/luajit/src
 GLAD_DIR = external/glad
 
 GEN_CC = cc
+GEN_EXE =
 
 TARGET ?= Linux
 ifeq ($(OS), Windows_NT)
-	TARGET := Windows
+	TARGET ?= Windows
+	GEN_EXE = .exe
+else
+	GEN_EXE = .bin
 endif
 
 LUA_SRC = $(wildcard $(LUA_DIR)/*.c)
@@ -30,6 +35,8 @@ EXE = .bin
 CFLAGS = 
 ifeq ($(RELEASE), 1)
 	CFLAGS += -O2
+else
+	CFLAGS += -g
 endif
 
 CDEFS =
@@ -61,7 +68,7 @@ else
 endif
 
 OUT = $(NAME)$(EXE)
-GEN = gen$(EXE)
+GEN = gen$(GEN_EXE)
 OBJ = $(SRC:%.c=%.o)
 EMBED = embed/boot.lua embed/font.ttf embed/audio_bank.lua embed/shader_factory.lua
 
