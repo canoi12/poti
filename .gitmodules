@@ -1,6 +1,0 @@
-[submodule "external/tea"]
-	path = external/tea
-	url = https://github.com/cafe-engine/tea
-[submodule "external/mocha"]
-	path = external/mocha
-	url = https://github.com/cafe-engine/mocha
