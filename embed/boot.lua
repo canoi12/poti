@@ -91,7 +91,7 @@ function _init()
         basepath = args[2]
     end
     poti.filesystem.init(basepath)
-    local path = poti.filesystem.basepath()
+    local path = poti.filesystem.get_basepath()
     package.path = path .. '?.lua;' .. path .. '?/init.lua;' .. package.path
     table.insert(
     package.searchers,

@@ -15,7 +15,7 @@ end
 function poti.load(args)
     print(#args)
     print(args[2])
-    print(poti.filesystem.basepath())
+    print(poti.filesystem.get_basepath())
     shader = poti.graphics.new_shader(
 [[
 vec4 position(vec2 pos, mat4 world, mat4 modelview) {
@@ -44,10 +44,7 @@ vec4 pixel(vec4 color, vec2 uv, sampler2D tex) {
 }
 ]]
     )
-    -- target = poti.Texture(160, 95, "target")
     target = poti.graphics.new_texture(160, 95, "target")
-    -- tex = poti.graphics.load_texture("ghost.jpg")
-    -- tex = poti.Texture("magnifique.jpg")
     palette = {
         {124, 63, 88, 255},
         {235, 107, 111, 255},

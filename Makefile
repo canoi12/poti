@@ -16,13 +16,6 @@ GLAD_DIR = external/glad
 GEN_CC = cc
 GEN_EXE =
 
-TARGET ?= Linux
-ifeq ($(OS), Windows_NT)
-	TARGET ?= Windows
-	GEN_EXE = .exe
-else
-	GEN_EXE = .bin
-endif
 
 LUA_SRC = $(wildcard $(LUA_DIR)/*.c)
 LUA_SRC := $(filter-out $(LUA_DIR)/lua.c,$(LUA_SRC))
@@ -43,11 +36,20 @@ CDEFS =
 ifeq ($(NO_EMBED), 1)
 	CDEFS += -DNO_EMBED
 endif
+
+ifeq ($(OS), Windows_NT)
+	GEN_EXE = .exe
+	GEN_CC = x86_64-w64-mingw32-gcc
+	TARGET ?= Windows
+else
+	GEN_EXE = .bin
+	GEN_CC = gcc
+endif
+
 ifeq ($(TARGET), Windows)
 	CC := gcc
 	EXE := .exe
 	PREFIX := x86_64-w64-mingw32-
-	GEN_CC := $(PREFIX)gcc
 	CFLAGS += -Wall -std=c99
 	INCL += -Iexternal/SDL2/include
 	LFLAGS =-Lexternal/SDL2/lib -Wl,-Bdynamic -lSDL2 -Wl,-Bstatic -mwindows -lpthread -lmingw32 -lopengl32

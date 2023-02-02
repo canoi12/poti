@@ -4,8 +4,8 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
-#define SBTAR_IMPLEMENTATION
-#include "sbtar.h"
+// #define SBTAR_IMPLEMENTATION
+// #include "sbtar.h"
 
 #define STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.h"
@@ -25,5 +25,4 @@
 #undef STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.h"
 
-#include "microui/src/microui.c"
 #include "glad/src/glad.c"

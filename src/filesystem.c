@@ -1,12 +1,52 @@
 #include "poti.h"
+#include <dirent.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #if !defined(POTI_NO_FILESYSTEM)
+
+enum {
+    FILE_NODE = 0,
+    DIR_NODE
+};
+
+struct File {
+    char type;
+    int offset, size;
+    union {
+        FILE* fp;
+        DIR* dir;
+    };
+};
+
+typedef struct FileHeader FileHeader;
+struct FileHeader {
+    char type;
+    unsigned int size;
+    unsigned int mode;
+    int uid;
+    int gid;
+    int checksum;
+    unsigned int mtime;
+    char name[100];
+    char linkname[100];
+    char uname[32];
+    char gname[32];
+};
+
+typedef struct Node Node;
+struct Node {
+    char type;
+    int offset;
+    struct FileHeader header;
+    Node* child;
+    Node* next;
+};
 
 struct Filesystem {
     char basepath[1024];
     char packed;
     char fused;
+    Node* root;
 };
 
 struct Filesystem _fs;
@@ -15,6 +55,7 @@ extern lua_State* _L;
 static void set_basepath(const i8* path);
 
 int poti_init_filesystem(lua_State* L) {
+    memset(&_fs, 0, sizeof(_fs));
     const i8* basepath = luaL_optstring(L, 1, "./");
     set_basepath(basepath);
     return 0;
@@ -66,7 +107,7 @@ static int l_poti_filesystem_init(lua_State* L) {
     return 0;
 }
 
-static int l_poti_filesystem_basepath(lua_State* L) {
+static int l_poti_filesystem_get_basepath(lua_State* L) {
     lua_pushstring(L, _fs.basepath);
     return 1;
 }
@@ -168,10 +209,20 @@ static int l_poti_filesystem_load(lua_State* L) {
     return 1;
 }
 
+static int l_poti_filesystem_is_fused(lua_State* L) {
+    lua_pushboolean(L, _fs.fused);
+    return 1;
+}
+
+static int l_poti_filesystem_is_packed(lua_State* L) {
+    lua_pushboolean(L, _fs.packed);
+    return 1;
+}
+
 int luaopen_filesystem(lua_State* L) {
     luaL_Reg reg[] = {
 		{"init", l_poti_filesystem_init},
-		{"basepath", l_poti_filesystem_basepath},
+		{"get_basepath", l_poti_filesystem_get_basepath},
 		{"set_basepath", l_poti_filesystem_set_basepath},
 		{"resolve", l_poti_filesystem_resolve},
 		{"exists", l_poti_filesystem_exists},
@@ -180,6 +231,9 @@ int luaopen_filesystem(lua_State* L) {
 		{"mkdir", l_poti_filesystem_mkdir},
 		{"rmdir", l_poti_filesystem_rmdir},
         {"load", l_poti_filesystem_load},
+        {"is_fused", l_poti_filesystem_is_fused},
+        {"is_packed", l_poti_filesystem_is_packed},
+        {"mount", NULL},
 		{NULL, NULL}
     };
     luaL_newlib(L, reg);

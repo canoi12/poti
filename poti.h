@@ -86,6 +86,10 @@ typedef struct Font Font;
 typedef struct Shader Shader;
 #endif
 
+#if !defined(POTI_NO_FILESYSTEM)
+typedef struct File File;
+#endif
+
 #if !defined(POTI_NO_AUDIO)
 typedef struct AudioData AudioData;
 typedef struct AudioBuffer AudioBuffer;
