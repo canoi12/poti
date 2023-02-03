@@ -16,9 +16,9 @@
 #define ma_countof(x)               (sizeof(x) / sizeof(x[0]))
 #endif
 
-const i8 lr_audio_data;
+const char lr_audio_data;
 
-const i8* audio_bank =
+const char* audio_bank =
 "local audio_bank = { ['stream'] = {}, ['static'] = {} }\n"
 "local function check(usage, path)\n"
 "   if not audio_bank[usage] then error('Invalid audio usage') end\n"
@@ -34,22 +34,22 @@ int l_register_audio_reg;
 int l_check_audio_reg;
 int l_audio_bank_reg;
 
-static u32 s_audio_id = 0;
+static Uint32 s_audio_id = 0;
 
 struct AudioData {
-    u32 id;
-    u8 usage;
-    u32 size;
-    u8* data;
-    u8 loop;
-    f32 volume, pitch;
+    Uint32 id;
+    Uint8 usage;
+    Uint32 size;
+    Uint8* data;
+    Uint8 loop;
+    float volume, pitch;
 };
 
 struct AudioBuffer {
-    u16 id;
+    Uint16 id;
     ma_decoder decoder;
-    u8 playing, loaded;
-    i64 offset;
+    Uint8 playing, loaded;
+    Sint64 offset;
     AudioData data;
 };
 
@@ -58,7 +58,7 @@ struct AudioSystem {
     ma_device device;
     ma_mutex lock;
 
-    u8 is_ready;
+    char is_ready;
     AudioBuffer buffers[MAX_AUDIO_BUFFER_CHANNELS];
 };
 
@@ -112,7 +112,7 @@ static int l_poti_audio_init(lua_State* L) {
         exit(EXIT_FAILURE);
     }
 
-    i32 i;
+    int i;
     for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
         AudioBuffer *buffer = &_audio.buffers[i];
         memset(buffer, 0, sizeof(*buffer));
@@ -141,9 +141,10 @@ static int l_poti_audio_load_audio(lua_State* L) {
 	const char *path = luaL_checkstring(L, 1);
 
 	const char* s_usage = luaL_optstring(L, 2, "stream");
-	const i8* tests[] = { "stream", "static" };
-	i32 check = 0;
-	for (i32 i = 0; i < 3; i++) {
+	const  char* tests[] = { "stream", "static" };
+	int check = 0;
+    int i;
+	for (i = 0; i < 3; i++) {
         if (!strcmp(s_usage, tests[i])) {
             check = 1;
             break;
@@ -158,7 +159,7 @@ static int l_poti_audio_load_audio(lua_State* L) {
         fprintf(stderr, "Failed to check audio register\n");
         exit(EXIT_FAILURE);
 	}
-	u8 exists = !lua_isnil(L, -1);
+	char exists = !lua_isnil(L, -1);
 
 	int usage = AUDIO_STREAM;
 	if (!strcmp(s_usage, "static")) usage = AUDIO_STATIC;
@@ -431,8 +432,8 @@ int s_register_audio_data(lua_State* L, u8 usage, const char *path) {
     lua_getfield(L, -1, path);
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
-        u32 size;
-	void* data = (void*)poti_fs_read_file(path, (i32*)&size);
+        Uint32 size;
+	void* data = (void*)poti_fs_read_file(path, (int*)&size);
         if (!data) {
             lua_pushstring(L, "failed to load audio: ");
             lua_pushstring(L, path);
@@ -486,30 +487,30 @@ int s_register_audio_data(lua_State* L, u8 usage, const char *path) {
 }
 #endif
 
-u32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, i16* output, u32 frames) {
-    i16 temp[4096];
-    u32 temp_cap_in_frames = ma_countof(temp) / AUDIO_DEVICE_CHANNELS;
-    u32 total_frames_read = 0;
+Uint32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, short* output, Uint32 frames) {
+    short temp[4096];
+    Uint32 temp_cap_in_frames = ma_countof(temp) / AUDIO_DEVICE_CHANNELS;
+    Uint32 total_frames_read = 0;
     ma_decoder* decoder = &buffer->decoder;
     AudioData* data = &(buffer->data);
-    f32 volume = data->volume;
-    f32 size = data->size * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
+    float volume = data->volume;
+    float size = data->size * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
 
     while (total_frames_read < frames) {
-        u32 sample;
-        u32 frames_read_this_iteration;
-        u32 total_frames_remaining = frames - total_frames_read;
-        u32 frames_to_read_this_iteration = temp_cap_in_frames;
+        Uint32 sample;
+        Uint32 frames_read_this_iteration;
+        Uint32 total_frames_remaining = frames - total_frames_read;
+        Uint32 frames_to_read_this_iteration = temp_cap_in_frames;
         if (frames_to_read_this_iteration > total_frames_remaining) {
             frames_to_read_this_iteration = total_frames_remaining;
         }
 
         if (data->usage == AUDIO_STREAM) {
-            frames_read_this_iteration = (u32)ma_decoder_read_pcm_frames(decoder, temp, frames_to_read_this_iteration);
+            frames_read_this_iteration = (Uint32)ma_decoder_read_pcm_frames(decoder, temp, frames_to_read_this_iteration);
         }
         else {
             frames_read_this_iteration = frames_to_read_this_iteration;
-            u32 aux = frames_to_read_this_iteration * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
+            Uint32 aux = frames_to_read_this_iteration * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
             memcpy(temp, data->data + buffer->offset, aux);
             if (buffer->offset > size) frames_read_this_iteration = 0;
             buffer->offset += aux;
@@ -529,20 +530,19 @@ u32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, i16* output, u32 frames) {
             break;
         }
     }
-
     return total_frames_read;
 }
 
 void s_audio_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
-    i16* out = (i16*)output;
+    short* out = (short*)output;
 
     ma_mutex_lock(&(_audio.lock));
-    i32 i;
+    int i;
     for (i = 0; i < MAX_AUDIO_BUFFER_CHANNELS; i++) {
         AudioBuffer* buffer = &(_audio.buffers[i]);
         AudioData* data = &(buffer->data);
         if (buffer->playing && buffer->loaded) {
-            u32 frames_read = s_read_and_mix_pcm_frames(buffer, out, frame_count);
+            Uint32 frames_read = s_read_and_mix_pcm_frames(buffer, out, frame_count);
             if (frames_read < frame_count) {
                 if (data->loop) {
                     ma_decoder_seek_to_pcm_frame(&buffer->decoder, 0);

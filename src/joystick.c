@@ -124,9 +124,9 @@ static int l_poti_joystick__button(lua_State* L) {
 
 static int l_poti_joystick__rumble(lua_State *L) {
     Joystick **j = luaL_checkudata(L, 1, JOYSTICK_META);
-    u16 low = luaL_checknumber(L, 2);
-    u16 high = luaL_checknumber(L, 3);
-    u32 freq = luaL_optnumber(L, 4, 100);
+    Uint16 low = luaL_checknumber(L, 2);
+    Uint16 high = luaL_checknumber(L, 3);
+    Uint32 freq = luaL_optnumber(L, 4, 100);
     lua_pushboolean(L, SDL_JoystickRumble(*j, low, high, freq) == 0);
     return 1;
 }

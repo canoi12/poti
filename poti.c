@@ -27,14 +27,14 @@ static int l_poti_version(lua_State* L) {
 }
 
 static int l_poti_running(lua_State* L) {
-    i32 top = lua_gettop(L);
+    int top = lua_gettop(L);
     if (top > 0) _running = lua_toboolean(L, 1);
     lua_pushboolean(L, _running);
     return 1;
 }
 #if 0
 static int l_poti_error(lua_State* L) {
-    const i8* msg = luaL_checkstring(L, 1);
+    const char* msg = luaL_checkstring(L, 1);
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_error_reg);
     lua_pushstring(L, msg);
     lua_pcall(L, 1, 0, 0);
@@ -42,7 +42,7 @@ static int l_poti_error(lua_State* L) {
 }
 #endif
 static int l_poti_set_func(lua_State* L) {
-    const i8* func = luaL_checkstring(L, 1);
+    const char* func = luaL_checkstring(L, 1);
     if (lua_type(L, 2) != LUA_TFUNCTION) {
 		luaL_error(L, "invalid arg #2, must be a function");
 		return 1;
@@ -66,7 +66,7 @@ int luaopen_poti(lua_State* L) {
     };
     luaL_newlib(L, reg);
 
-    struct { i8* name; lua_CFunction fn; } libs[] = {
+    struct { char* name; lua_CFunction fn; } libs[] = {
 #if !defined(POTI_NO_AUDIO)
         {"audio", luaopen_audio},
 #endif
@@ -100,7 +100,7 @@ int luaopen_poti(lua_State* L) {
         {NULL, NULL}
     };
 
-    i32 i;
+    int i;
     for (i = 0; libs[i].name; i++) {
         if (libs[i].fn) {
             libs[i].fn(L);
@@ -120,14 +120,15 @@ int poti_init(int argc, char** argv) {
 
     lua_getglobal(L, "poti");
     lua_newtable(L);
-    for (i32 i = 0; i < argc; i++) {
+    int i;
+    for (i = 0; i < argc; i++) {
 		lua_pushstring(L, argv[i]);
 		lua_rawseti(L, -2, i+1);
     }
     lua_setfield(L, -2, "args");
     lua_pop(L, 1);
 
-    i32 flags = SDL_INIT_SENSOR;
+    int flags = SDL_INIT_SENSOR;
 #if !defined(POTI_NO_AUDIO)
     flags |= SDL_INIT_AUDIO;
 #endif
@@ -154,13 +155,13 @@ int poti_init(int argc, char** argv) {
 
 #ifndef NO_EMBED
     if (luaL_dostring(L, _embed_boot_lua) != LUA_OK) {
-		const i8* error_buf = lua_tostring(L, -1);
+		const char* error_buf = lua_tostring(L, -1);
 		fprintf(stderr, "Failed to load poti lua boot: %s\n", error_buf);
 		exit(EXIT_FAILURE);
     }
 #else
     if (luaL_dofile(L, "embed/boot.lua") != LUA_OK) {
-		const i8* error_buf = lua_tostring(L, -1);
+		const char* error_buf = lua_tostring(L, -1);
 		fprintf(stderr, "Failed to load poti lua boot: %s\n", error_buf);
 		exit(EXIT_FAILURE);
     }
@@ -171,7 +172,7 @@ int poti_init(int argc, char** argv) {
 
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_init_reg);
     if (lua_pcall(L, 0, 2, 0) != LUA_OK) {
-		const i8* error_buf = lua_tostring(L, -1);
+		const char* error_buf = lua_tostring(L, -1);
 		fprintf(stderr, "Failed to load poti init function: %s\n", error_buf);
 		exit(EXIT_FAILURE);
     }
@@ -205,7 +206,7 @@ int poti_quit(void) {
     lua_State* L = _L;
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_deinit_reg);
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-		const i8* error_buf = lua_tostring(L, -1);
+		const char* error_buf = lua_tostring(L, -1);
 		fprintf(stderr, "Failed to call lua deinit function: %s\n", error_buf);
         if (_gl_ctx) SDL_GL_DeleteContext(_gl_ctx);
         if (_window) SDL_DestroyWindow(_window);
