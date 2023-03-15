@@ -63,17 +63,6 @@
 extern "C" {
 #endif
 
-typedef char i8;
-typedef unsigned char u8;
-typedef short i16;
-typedef unsigned short u16;
-typedef int i32;
-typedef unsigned int u32;
-typedef long int i64;
-typedef unsigned long int u64;
-typedef float f32;
-typedef double f64;
-
 #if !defined(POTI_NO_WINDOW)
 typedef struct SDL_Window Window;
 #endif
@@ -111,7 +100,7 @@ extern int l_step_reg;
 int luaopen_poti(lua_State* L);
 
 #if !defined(POTI_NO_AUDIO)
-extern const i8 lr_audio_data;
+extern const char lr_audio_data;
 int luaopen_audio(lua_State* L);
 #endif
 #if !defined(POTI_NO_EVENT)
@@ -119,8 +108,8 @@ int luaopen_event(lua_State* L);
 #endif
 #if !defined(POTI_NO_FILESYSTEM)
 int luaopen_filesystem(lua_State* L);
-const i8* poti_fs_read_file(const i8* filename, size_t* out_size);
-int poti_fs_write_file(const i8* filename, i32 size);
+const char* poti_fs_read_file(const char* filename, size_t* out_size);
+int poti_fs_write_file(const char* filename, int size);
 #endif
 #if !defined(POTI_NO_GRAPHICS) && !defined(POTI_NO_WINDOW)
 int luaopen_graphics(lua_State* L);

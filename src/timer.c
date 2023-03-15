@@ -1,9 +1,9 @@
 #include "poti.h"
 #if !defined(POTI_NO_TIMER)
 struct Timer {
-    f64 last;
-    f64 delta;
-    i32 fps, frames;
+    double last;
+    double delta;
+    int fps, frames;
 };
 
 static struct Timer timer;
@@ -19,7 +19,7 @@ static int l_poti_timer_ticks(lua_State* L) {
 }
 
 static int l_poti_timer_delay(lua_State* L) {
-    u32 ms = luaL_checkinteger(L, 1);
+    Uint32 ms = luaL_checkinteger(L, 1);
     SDL_Delay(ms);
     return 0;
 }

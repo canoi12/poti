@@ -8,16 +8,16 @@ int l_poti_window_init(lua_State* L) {
 #if 1
     lua_getfield(L, 1, "window");
     lua_getfield(L, -1, "title");
-    const i8* title = luaL_checkstring(L, -1);
+    const char* title = luaL_checkstring(L, -1);
     lua_pop(L, 1);
     lua_getfield(L, -1, "width");
-    i32 width = luaL_checkinteger(L, -1);
+    int width = luaL_checkinteger(L, -1);
     lua_pop(L, 1);
     lua_getfield(L, -1, "height");
-    i32 height = luaL_checkinteger(L, -1);
+    int height = luaL_checkinteger(L, -1);
     lua_pop(L, 1);
 
-    i32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
+    int window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
     lua_getfield(L, -1, "resizable");
     if (lua_toboolean(L, -1)) window_flags |= SDL_WINDOW_RESIZABLE;
     lua_pop(L, 1);
@@ -32,10 +32,10 @@ int l_poti_window_init(lua_State* L) {
     lua_pop(L, 2);
 #else
     const char* title = "poti "POTI_VER;
-    i32 width, height;
+    int width, height;
     width = 640;
     height = 380;
-    i32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
+    int window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
 #endif
     _window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, window_flags);
     lua_pushlightuserdata(L, _window);
@@ -48,7 +48,7 @@ static int l_poti_window_deinit(lua_State* L) {
 }
 
 static int l_poti_window_title(lua_State* L) {
-    const i8* title = NULL;
+    const char* title = NULL;
     if (!lua_isnil(L, 1)) {
         title = luaL_checkstring(L, 1);
         SDL_SetWindowTitle(_window, title);
@@ -59,9 +59,9 @@ static int l_poti_window_title(lua_State* L) {
 }
 
 static int l_poti_window_width(lua_State* L) {
-    i32 width = 0;
+    int width = 0;
     if (!lua_isnil(L, 1)) {
-        i32 height;
+        int height;
         width = luaL_checkinteger(L, 1);
         SDL_GetWindowSize(_window, NULL, &height);
         SDL_SetWindowSize(_window, width, height);

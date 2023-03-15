@@ -59,7 +59,7 @@ static int l_poti_gamepad__axis(lua_State *L) {
     if (axis < 0) {
         return luaL_argerror(L, 2, "Invalid axis name");
     }
-    f32 val = (f32)SDL_GameControllerGetAxis(*g, axis) / SDL_JOYSTICK_AXIS_MAX;
+    float val = (float)SDL_GameControllerGetAxis(*g, axis) / SDL_JOYSTICK_AXIS_MAX;
     lua_pushnumber(L, val);
     return 1;
 }
@@ -77,9 +77,9 @@ static int l_poti_gamepad__button(lua_State *L) {
 
 static int l_poti_gamepad__rumble(lua_State *L) {
     GameController **g = luaL_checkudata(L, 1, GAMEPAD_META);
-    u16 low = (u16)luaL_checknumber(L, 2);
-    u16 high = (u16)luaL_checknumber(L, 3);
-    u32 freq = (u32)luaL_optnumber(L, 4, 100);
+    Uint16 low = (Uint16)luaL_checknumber(L, 2);
+    Uint16 high = (Uint16)luaL_checknumber(L, 3);
+    Uint32 freq = (Uint32)luaL_optnumber(L, 4, 100);
     lua_pushboolean(L, SDL_GameControllerRumble(*g, low, high, freq) == 0);
     return 1;
 }

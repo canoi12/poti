@@ -393,10 +393,10 @@ static int s_poll(lua_State* L) {
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_polltable_reg);
     lua_rawgeti(L, -1, table_index);
     lua_remove(L, -2);
-    i32 top = lua_gettop(L);
-    i32 ret = lua_rawlen(L, -1);
-
-    for (i32 i = 0; i < ret; i++) {
+    int top = lua_gettop(L);
+    int ret = lua_rawlen(L, -1);
+    int i;
+    for (i = 0; i < ret; i++) {
 	lua_rawgeti(L, top, i+1);
     }
     lua_remove(L, top);
@@ -408,8 +408,8 @@ static int l_poti_event_poll(lua_State* L) {
     lua_newtable(L);
     lua_pushvalue(L, -1);
     lua_rawsetp(L, LUA_REGISTRYINDEX, &l_polltable_reg);
-    i32 poll_top = lua_gettop(L);
-    i32 index = 1;
+    int poll_top = lua_gettop(L);
+    int index = 1;
     table_index = 1;
     lua_rawgetp(L, LUA_REGISTRYINDEX, &l_event_reg);
     while (SDL_PollEvent(&_event)) {
@@ -421,12 +421,11 @@ static int l_poti_event_poll(lua_State* L) {
             lua_pushvalue(L, -1);
             lua_rawseti(L, poll_top, index);
             index++;
-            i32 top = lua_gettop(L);
-            i32 args = func(L);
+            int top = lua_gettop(L);
+            int args = func(L);
             // fprintf(stderr, "Teste(%d): %s %d\n", _event.type, lua_tostring(L, top+1), args);
-            for (i32 i = 0; i < args; i++) {
-                lua_rawseti(L, top, i+1);
-            }
+            int i;
+            for (i = 0; i < args; i++) lua_rawseti(L, top, i+1);
         }
         lua_pop(L, 1);
     }
@@ -443,7 +442,7 @@ int luaopen_event(lua_State* L) {
     lua_newtable(L);
 
     struct {
-        i32 type;
+        int type;
         lua_CFunction fn;
     } fn[] = {
         {SDL_QUIT, l_poti_callback_quit},
@@ -490,7 +489,7 @@ int luaopen_event(lua_State* L) {
         {-1, NULL}
     };
 
-    i32 i;
+    int i;
     for (i = 0; fn[i].type != -1; i++) {
         lua_pushinteger(L, fn[i].type);
         lua_pushcfunction(L, fn[i].fn);

@@ -24,71 +24,71 @@ static int _shader_factory_lua;
 typedef struct Vertex Vertex;
 
 struct GLInfo {
-    u8 major, minor;
-    u16 glsl;
-    u16 es; 
+    Uint8 major, minor;
+    Uint16 glsl;
+    Uint16 es; 
 };
 
 static struct GLInfo s_gl_info;
 
 struct Texture {
-    u32 fbo;
-    u32 handle;
-    i32 width, height;
-    u32 filter[2];
-    u32 wrap[2];
+    Uint32 fbo;
+    Uint32 handle;
+    int width, height;
+    Uint32 filter[2];
+    Uint32 wrap[2];
 };
 
 struct Font {
     struct {
         // advance x and y
-        i32 ax, ay;
+        int ax, ay;
         //bitmap width and rows
-        i32 bw, bh;
+        int bw, bh;
         // bitmap left and top
-        i32 bl, bt;
+        int bl, bt;
         // x offset of glyph
-        i32 tx;
+        int tx;
     } c[256];
 
     Texture *tex;
-    u8 size;
+    char size;
 
     stbtt_fontinfo info;
-    f32 ptsize;
-    f32 scale;
-    i32 baseline;
-    i32 height;
+    float ptsize;
+    float scale;
+    int baseline;
+    int height;
     void *data;
 };
 
 struct Shader {
-    u32 handle;
-    u32 u_world, u_modelview;
+    Uint32 handle;
+    Uint32 u_world, u_modelview;
 };
 
 typedef union {
     struct {
-		f32 x, y;
-		f32 r, g, b, a;
-		f32 u, v;
+		float x, y;
+		float r, g, b, a;
+		float u, v;
     };
-    f32 data[8];
+    float data[8];
 } VertexFormat;
 
 struct Vertex {
-    u32 vao;
-    u32 vbo, ibo;
-    u32 offset, size;
+    Uint32 vao;
+    Uint32 vbo, ibo;
+    Uint32 offset, size;
     void* data;
 };
 
 #define MATRIX_STACK_SIZE 256
 
 struct Render {
-    u32 clear_flags;
-    u32 draw_calls;
-    i8 draw_mode;
+    Uint32 clear_flags;
+    Uint32 draw_calls;
+    char draw_mode;
     vec4 color;
 
     struct {
@@ -115,20 +115,20 @@ static struct Render _render;
 
 static int l_perspective_func(lua_State*L);
 
-static u8* utf8_codepoint(u8* p, i32* codepoint);
-static i32 init_font(Font* font, const void* data, size_t buf_size, i32 font_size);
+static Uint8* utf8_codepoint(Uint8* p, int* codepoint);
+static int init_font(Font* font, const void* data, size_t buf_size, int font_size);
 
-static void init_vertex(Vertex*, u32);
+static void init_vertex(Vertex*, Uint32);
 static void bind_vertex(Vertex*);
 static void clear_vertex(Vertex*);
 
 static void set_texture(Texture*);
 static void set_shader(Shader*);
 static void set_target(Texture*);
-static void set_draw_mode(u8 draw_mode);
+static void set_draw_mode(Uint8 draw_mode);
 
 static void push_vertex(Vertex*, VertexFormat);
-static void push_vertices(Vertex*, u32, VertexFormat*);
+static void push_vertices(Vertex*, Uint32, VertexFormat*);
 
 static void draw_vertex(Vertex*);
 
@@ -137,7 +137,7 @@ static int l_poti_graphics_new_shader(lua_State*);
 static int l_poti_graphics_new_font(lua_State* L);
 
 #if 0
-const i8* _vert_source =
+const char* _vert_source =
 "#version 140\n"
 "uniform mat4 u_World;\n"
 "uniform mat4 u_ModelView;\n"
@@ -152,7 +152,7 @@ const i8* _vert_source =
 "   gl_Position = u_World * u_ModelView * vec4(a_Position.x, a_Position.y, 0, 1);\n"
 "}";
 
-const i8* _frag_source =
+const char* _frag_source =
 "#version 140\n"
 "uniform sampler2D u_Texture;\n"
 "in vec4 v_Color;\n"
@@ -179,7 +179,7 @@ static int l_poti_graphics_init(lua_State* L) {
 
     SDL_Window* window = lua_touserdata(L, 2);
     lua_getfield(L, 1, "gl");
-    i32 profile, major, minor;
+    int profile, major, minor;
 #if defined(__EMSCRIPTEN__)
     profile = SDL_GL_CONTEXT_PROFILE_ES; 
     major = 2;
@@ -210,12 +210,12 @@ static int l_poti_graphics_init(lua_State* L) {
 #endif
     lua_pop(L, 1);
 
-    const u8 *version = glGetString(GL_VERSION);
-    const u8 *glsl = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    const Uint8 *version = glGetString(GL_VERSION);
+    const Uint8 *glsl = glGetString(GL_SHADING_LANGUAGE_VERSION);
 
     fprintf(stderr, "%s // %s\n", version, glsl);
 
-    const i8 *prefixes[] = {
+    const char *prefixes[] = {
         "OpenGL ES-CM ",
         "OpenGL ES-CL ",
         "OpenGL ES ",
@@ -223,8 +223,8 @@ static int l_poti_graphics_init(lua_State* L) {
     };
     struct GLInfo *info = &s_gl_info;
     info->es = 0;
-    i8* ver = (i8*)version;
-    for (u32 i = 0; prefixes[i] != NULL; i++) {
+    char* ver = (char*)version;
+    for (Uint32 i = 0; prefixes[i] != NULL; i++) {
         if (strncmp(ver, prefixes[i], strlen(prefixes[i])) == 0) {
             ver += strlen(prefixes[i]);
             info->es = 1;
@@ -239,7 +239,7 @@ static int l_poti_graphics_init(lua_State* L) {
             info->glsl = info->major * 100 + info->minor * 10;
         }
     } else {
-        float fglsl = atof((const i8*)glsl);
+        float fglsl = atof((const char*)glsl);
         info->glsl = 100 * fglsl;
     }
 
@@ -249,13 +249,13 @@ static int l_poti_graphics_init(lua_State* L) {
 
 #ifndef NO_EMBED
     if (luaL_dostring(L, _shader_factory_lua) != LUA_OK) {
-        const i8* error_buf = lua_tostring(L, -1);
+        const char* error_buf = lua_tostring(L, -1);
         fprintf(stderr, "Failed to init shader factory: %s\n", error_buf);
         exit(EXIT_FAILURE);
     }
 #else
     if (luaL_dofile(L, "embed/shader_factory.lua") != LUA_OK) {
-        const i8* error_buf = lua_tostring(L, -1);
+        const char* error_buf = lua_tostring(L, -1);
         fprintf(stderr, "Failed to init shader factory: %s\n", error_buf);
         exit(EXIT_FAILURE);
     }
@@ -263,7 +263,7 @@ static int l_poti_graphics_init(lua_State* L) {
     lua_pushinteger(L, info->glsl);
     lua_pushboolean(L, info->es);
     if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
-        const i8* error_buf = lua_tostring(L, -1);
+        const char* error_buf = lua_tostring(L, -1);
         fprintf(stderr, "Failed to setup shader factory: %s\n", error_buf);
         exit(EXIT_FAILURE);
     }
@@ -276,7 +276,7 @@ static int l_poti_graphics_init(lua_State* L) {
     Texture* target = &(RENDER()->def_target);
     target->fbo = 0;
     target->handle = 0;
-    i32 ww, hh;
+    int ww, hh;
     SDL_GetWindowSize(_window, &ww, &hh);
     target->width = ww;
     target->height = hh;
@@ -301,7 +301,7 @@ static int l_poti_graphics_init(lua_State* L) {
     lua_pushnumber(L, 1);
     lua_pushnumber(L, 1);
     lua_pushnil(L);
-    u8 pixels[] = {255, 255, 255, 255};
+    Uint8 pixels[] = {255, 255, 255, 255};
     lua_pushlightuserdata(L, pixels);
     lua_pcall(L, 4, 1, 0);
     RENDER()->tex = NULL;
@@ -349,7 +349,7 @@ static int l_poti_graphics_deinit(lua_State* L) {
 }
 
 static int l_poti_graphics_size(lua_State* L) {
-    i32 view[4];
+    int view[4];
     glGetIntegerv(GL_VIEWPORT, view);
     lua_pushinteger(L, view[2]);
     lua_pushinteger(L, view[3]);
@@ -361,9 +361,9 @@ static int l_poti_graphics_size(lua_State* L) {
  ***********************/
 
 static int l_poti_graphics_clear(lua_State* L) {
-    f32 color[4] = {0.f, 0.f, 0.f, 1.f};
-    i32 args = lua_gettop(L);
-    for (i32 i = 0; i < args; i++)
+    float color[4] = {0.f, 0.f, 0.f, 1.f};
+    int args = lua_gettop(L);
+    for (int i = 0; i < args; i++)
 	color[i] = lua_tonumber(L, i+1) / 255.f;
     glClearColor(color[0], color[1], color[2], color[3]);
     glClear(RENDER()->clear_flags);
@@ -371,8 +371,8 @@ static int l_poti_graphics_clear(lua_State* L) {
 }
 
 static int l_poti_graphics_set_color(lua_State* L) {
-    i32 args = lua_gettop(L);
-    for (i32 i = 0; i < args; i++)
+    int args = lua_gettop(L);
+    for (int i = 0; i < args; i++)
 		RENDER()->color[i] = luaL_checknumber(L, i+1) / 255.f;
 
     return 0;
@@ -393,8 +393,8 @@ static int l_poti_graphics_set_shader(lua_State* L) {
 }
 
 static int l_poti_graphics_set_draw(lua_State* L) {
-    const i8* s_mode = luaL_checkstring(L, 1);
-    u8 mode = POTI_LINE;
+    const char* s_mode = luaL_checkstring(L, 1);
+    Uint8 mode = POTI_LINE;
     if (!strcmp(s_mode, "line")) mode = POTI_LINE;
     else if (!strcmp(s_mode, "fill")) mode = POTI_FILL;
     else {
@@ -420,12 +420,12 @@ static int l_poti_graphics_draw_buffer(lua_State* L) {
 }
 
 static int l_poti_graphics_point(lua_State* L) {
-    f32 x, y;
+    float x, y;
     x = luaL_checknumber(L, 1);
     y = luaL_checknumber(L, 2);
-    f32 *c = RENDER()->color;
+    float *c = RENDER()->color;
     
-    f32 vertices[] = {
+    float vertices[] = {
 	x, y, c[0], c[1], c[2], c[3], 0.f, 0.f
     };
     // Texture* tex = RENDER()->tex;
@@ -438,13 +438,13 @@ static int l_poti_graphics_point(lua_State* L) {
 }
 
 static int l_poti_graphics_line(lua_State* L) {
-    f32 p[4];
+    float p[4];
     set_texture(RENDER()->white);
 
     for (int i = 0; i < 4; i++)
 	p[i] = luaL_checknumber(L, i+1);
-    f32* c= RENDER()->color;
-    f32 vertices[] = {
+    float* c= RENDER()->color;
+    float vertices[] = {
 	p[0], p[1], c[0], c[1], c[2], c[3], 0.f, 0.f,
 	p[2], p[3], c[0], c[1], c[2], c[3], 1.f, 1.f,
     };
@@ -460,17 +460,17 @@ static int l_poti_graphics_line(lua_State* L) {
     return 0;
 }
 
-typedef void(*DrawCircle)(f32, f32, f32, i32);
+typedef void(*DrawCircle)(float, float, float, int);
 static void push_filled_circle(float xc, float yc, float radius, int segments) {
-    f32 sides = segments >= 4 ? segments : 4;
-    i32 bsize = (3*sides);
+    float sides = segments >= 4 ? segments : 4;
+    int bsize = (3*sides);
     VertexFormat vertices[bsize];
     // float vertices[bsize];
-    f64 pi2 = 2.0 * M_PI;
+    double pi2 = 2.0 * M_PI;
 
     // float *v = vertices;
     VertexFormat* v = vertices;
-    for (i32 i = 0; i < sides; i++) {
+    for (int i = 0; i < sides; i++) {
 		v->x = xc;
 		v->y = yc;
 		v->r = RENDER()->color[0];
@@ -481,7 +481,7 @@ static void push_filled_circle(float xc, float yc, float radius, int segments) {
 		v->v = 0.f;
 		v++;
 
-		f32 tetha = (i * pi2) / sides;
+		float tetha = (i * pi2) / sides;
 
 		v->x = xc + (cosf(tetha) * radius);
 		v->y = yc + (sinf(tetha) * radius);
@@ -512,15 +512,15 @@ static void push_filled_circle(float xc, float yc, float radius, int segments) {
 }
 
 static void push_lined_circle(float xc, float yc, float radius, int segments) {
-    f32 sides = segments >= 4 ? segments : 4;
-    i32 bsize = (2*sides);
+    float sides = segments >= 4 ? segments : 4;
+    int bsize = (2*sides);
     // float vertices[bsize];
     VertexFormat vertices[bsize];
-    f64 pi2 = 2.0 * M_PI;
+    double pi2 = 2.0 * M_PI;
 
     VertexFormat* v = vertices;
-    for (i32 i = 0; i < sides; i++) {
-        f32 tetha = (i * pi2) / sides;
+    for (int i = 0; i < sides; i++) {
+        float tetha = (i * pi2) / sides;
 
         v->x = xc + (cosf(tetha) * radius);
         v->y = yc + (sinf(tetha) * radius);
@@ -572,8 +572,8 @@ static int l_poti_graphics_circle(lua_State *L) {
 
 typedef void(*DrawRect)(SDL_Rect*);
 static void push_filled_rect(SDL_Rect *r) {
-    f32 *c = RENDER()->color;
-    f32 vertices[] = {
+    float *c = RENDER()->color;
+    float vertices[] = {
         r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
         r->x + r->w, r->y, c[0], c[1], c[2], c[3], 1.f, 0.f,
         r->x + r->w, r->y + r->h, c[0], c[1], c[2], c[3], 1.f, 1.f,
@@ -589,8 +589,8 @@ static void push_filled_rect(SDL_Rect *r) {
     push_vertices(VERTEX(), 6, v);
 }
 static void push_lined_rect(SDL_Rect *r) {
-    f32 *c = RENDER()->color;
-    f32 vertices[] = {
+    float *c = RENDER()->color;
+    float vertices[] = {
         r->x, r->y, c[0], c[1], c[2], c[3], 0.f, 0.f,
         r->x + r->w, r->y, c[0], c[1], c[2], c[3], 1.f, 0.f,
 
@@ -630,10 +630,10 @@ static int l_poti_graphics_rectangle(lua_State *L) {
     return 0;
 }
 
-typedef void(*DrawTriangle)(f32, f32, f32, f32, f32, f32);
-static void push_filled_triangle(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2) {
-    f32 *c = RENDER()->color;
-    f32 vertices[] = {
+typedef void(*DrawTriangle)(float, float, float, float, float, float);
+static void push_filled_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
+    float *c = RENDER()->color;
+    float vertices[] = {
         x0, y0, c[0], c[1], c[2], c[3], 0.5f, 0.f,
         x1, y1, c[0], c[1], c[2], c[3], 0.f, 1.f,
         x2, y2, c[0], c[1], c[2], c[3], 1.f, 1.f
@@ -643,9 +643,9 @@ static void push_filled_triangle(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2)
     push_vertices(VERTEX(), 3, v);
 }
 
-static void push_lined_triangle(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2) {
-    f32 *c = RENDER()->color;
-    f32 vertices[] = {
+static void push_lined_triangle(float x0, float y0, float x1, float y1, float x2, float y2) {
+    float *c = RENDER()->color;
+    float vertices[] = {
         x0, y0, c[0], c[1], c[2], c[3], 0.5f, 0.f,
         x1, y1, c[0], c[1], c[2], c[3], 0.f, 1.f,
 
@@ -661,7 +661,7 @@ static void push_lined_triangle(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2) 
 
 static int l_poti_graphics_triangle(lua_State *L) {
 
-    f32 points[6];
+    float points[6];
 
     for (int i = 0; i < 6; i++)
         points[i] = luaL_checknumber(L, i+1);
@@ -679,8 +679,8 @@ static int l_poti_graphics_triangle(lua_State *L) {
 
 static int l_poti_graphics_push_vertex(lua_State *L) {
 	set_texture(RENDER()->white);
-    f32 *c = RENDER()->color;
-	f32 f[8] = {
+    float *c = RENDER()->color;
+	float f[8] = {
 		0.f, 0.f,
 		c[0], c[1], c[2], c[3],
 		0.f, 0.f
@@ -689,8 +689,8 @@ static int l_poti_graphics_push_vertex(lua_State *L) {
 	// fprintf(stderr, "color: %f %f %f %f\n", c[0], c[1], c[2], c[3]);
     f[0] = luaL_checknumber(L, 1);
     f[1] = luaL_checknumber(L, 2);
-	i32 top = lua_gettop(L) - 2;
-    for (i32 i = 0; i < top; i++) {
+	int top = lua_gettop(L) - 2;
+    for (int i = 0; i < top; i++) {
         f[i+2] = luaL_optnumber(L, 3+i, f[i+2]);
     }
 	memcpy(&vertex, f, sizeof(VertexFormat));
@@ -698,7 +698,7 @@ static int l_poti_graphics_push_vertex(lua_State *L) {
     return 0;
 }
 
-static void char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_pos, SDL_Rect *rect, int width) {
+static void char_rect(Font *font, const int c, float *x, float *y, SDL_Point *out_pos, SDL_Rect *rect, int width) {
     if (c == '\n') {
         *x = 0;
         *y += font->height;
@@ -714,13 +714,13 @@ static void char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_po
         *y += font->height;
     }
 
-    f32 x2 = *x + font->c[c].bl;
-    f32 y2 = *y + font->c[c].bt;
+    float x2 = *x + font->c[c].bl;
+    float y2 = *y + font->c[c].bt;
 
-    f32 s0 = font->c[c].tx;
-    f32 t0 = 0;
-    i32 s1 = font->c[c].bw;
-    i32 t1 = font->c[c].bh;
+    float s0 = font->c[c].tx;
+    float t0 = 0;
+    int s1 = font->c[c].bw;
+    int t1 = font->c[c].bh;
 
     *x += font->c[c].ax;
     *y += font->c[c].ay;
@@ -734,12 +734,12 @@ static void char_rect(Font *font, const i32 c, f32 *x, f32 *y, SDL_Point *out_po
 
 static int l_poti_graphics_print(lua_State* L) {
     Font* font = RENDER()->font;
-    f32 x, y;
-    const i8* text = luaL_checkstring(L, 1);
+    float x, y;
+    const char* text = luaL_checkstring(L, 1);
     x = luaL_optnumber(L, 2, 0);
     y = luaL_optnumber(L, 3, 0);
 
-    u8* p = (u8*)text;
+    Uint8* p = (Uint8*)text;
     float x0 = 0, y0 = 0;
     float w, h;
     float *c = RENDER()->color;
@@ -747,7 +747,7 @@ static int l_poti_graphics_print(lua_State* L) {
     h = font->tex->height;
     set_texture(font->tex);
     while (*p != 0) {
-        i32 codepoint;
+        int codepoint;
         p = utf8_codepoint(p, &codepoint);
         SDL_Rect src, dest;
         SDL_Point pos;
@@ -793,9 +793,9 @@ static int l_poti_graphics_identity(lua_State* L) {
 }
 
 static int l_poti_graphics_translate(lua_State* L) {
-    f32 pos[3] = {0.f, 0.f, 0.f};
-    i32 top = lua_gettop(L);
-    for (i32 i = 0; i < top; i++) {
+    float pos[3] = {0.f, 0.f, 0.f};
+    int top = lua_gettop(L);
+    for (int i = 0; i < top; i++) {
 	pos[i] = luaL_checknumber(L, i+1);
     }
     mat4x4_translate_in_place(*(RENDER()->matrix.ptr), pos[0], pos[1], pos[2]);
@@ -803,9 +803,9 @@ static int l_poti_graphics_translate(lua_State* L) {
 }
 
 static int l_poti_graphics_scale(lua_State* L) {
-    f32 pos[3] = {0.f, 0.f, 0.f};
-    i32 top = lua_gettop(L);
-    for (i32 i = 0; i < top; i++) {
+    float pos[3] = {0.f, 0.f, 0.f};
+    int top = lua_gettop(L);
+    for (int i = 0; i < top; i++) {
         pos[i] = luaL_checknumber(L, i+1);
     }
     mat4x4_scale_aniso(*(RENDER()->matrix.ptr), *(RENDER()->matrix.ptr), pos[0], pos[1], pos[2]);
@@ -813,7 +813,7 @@ static int l_poti_graphics_scale(lua_State* L) {
 }
 
 static int l_poti_graphics_rotate(lua_State* L) {
-    f32 angle = luaL_checknumber(L, 1);
+    float angle = luaL_checknumber(L, 1);
     mat4x4_rotate_Z(*(RENDER()->matrix.ptr), *(RENDER()->matrix.ptr), angle);
     return 0;
 }
@@ -833,7 +833,7 @@ static int l_poti_graphics_push(lua_State* L) {
 static int s_init_texture(Texture *tex, int target, int w, int h, int format, void *data) {
     if (!tex) return 0;
     glGenTextures(1, &tex->handle);
-    i32 curr_tex = 0;
+    int curr_tex = 0;
     if (RENDER()->tex) curr_tex = RENDER()->tex->handle;
     glBindTexture(GL_TEXTURE_2D, tex->handle);
 
@@ -884,16 +884,16 @@ int l_poti_graphics_new_texture(lua_State *L) {
     Texture* tex = (Texture*)lua_newuserdata(L, sizeof(*tex));
     luaL_setmetatable(L, TEXTURE_META);
     tex->fbo = 0;
-    i32 w, h;
+    int w, h;
     w = luaL_checknumber(L, 1);
     h = luaL_checknumber(L, 2);
-    i32 top = lua_gettop(L);
-    const i8* s_usage = NULL;
+    int top = lua_gettop(L);
+    const char* s_usage = NULL;
     s_usage = luaL_optstring(L, 3, "static");
     void* data = NULL;
     if (top > 3) data = lua_touserdata(L, 4);
 
-    i32 usage = s_textype_from_string(L, s_usage);
+    int usage = s_textype_from_string(L, s_usage);
     if (usage < 0) return luaL_argerror(L, 3, "Invalid texture usage");
     s_init_texture(tex, usage, w, h, GL_RGBA, data);
     // s_texture_from_size(L, tex);
@@ -907,18 +907,18 @@ static int l_poti_graphics_load_texture(lua_State* L) {
     tex->fbo = 0;
 
     size_t size;
-    const i8* path = luaL_checklstring(L, 1, &size);
+    const char* path = luaL_checklstring(L, 1, &size);
 
     int w, h, format, req_format;
     req_format = STBI_rgb_alpha;
 
     size_t fsize;
-    u8* img = (u8*)poti_fs_read_file(path, &fsize);
+    Uint8* img = (Uint8*)poti_fs_read_file(path, &fsize);
     if (!img) return luaL_error(L, "failed to open image: %s", path);
 
-    u8 *pixels = stbi_load_from_memory(img, fsize, &w, &h, &format, req_format);
+    Uint8 *pixels = stbi_load_from_memory(img, fsize, &w, &h, &format, req_format);
     if (!pixels) return luaL_error(L, "file %s is not a valid image", path);
-    i32 pixel_format = GL_RGB;
+    int pixel_format = GL_RGB;
     switch (req_format) {
         case STBI_rgb: pixel_format = GL_RGB; break;
         case STBI_rgb_alpha: pixel_format = GL_RGBA; break;
@@ -992,8 +992,8 @@ static int get_flip_from_table(lua_State *L, int index, int *flip) {
 
 static int l_poti_texture__draw(lua_State* L) {
     Texture* tex = luaL_checkudata(L, 1, TEXTURE_META);
-    i32 index = 2;
-    f32 w, h;
+    int index = 2;
+    float w, h;
 
     w = tex->width;
     h = tex->height;
@@ -1003,11 +1003,11 @@ static int l_poti_texture__draw(lua_State* L) {
     get_rect_from_table(L, index++, &s);
 
     vec2 u, v;
-    u[0] = (f32)s.x / w;
-    u[1] = ((f32)s.x + s.w) / w;
+    u[0] = (float)s.x / w;
+    u[1] = ((float)s.x + s.w) / w;
 
-    v[0] = (f32)s.y / h;
-    v[1] = ((f32)s.y + s.h) / h;
+    v[0] = (float)s.y / h;
+    v[1] = ((float)s.y + s.h) / h;
 
     SDL_Rect d = { 0, 0, s.w, s.h };
     get_rect_from_table(L, index++, &d);
@@ -1026,12 +1026,12 @@ static int l_poti_texture__draw(lua_State* L) {
         int flip = SDL_FLIP_NONE;
         get_flip_from_table(L, index++, &flip);
         if (flip & SDL_FLIP_VERTICAL) {
-            f32 aux = v[0];
+            float aux = v[0];
             v[0] = v[1];
             v[1] = aux;
         }
         if (flip & SDL_FLIP_HORIZONTAL) {
-            f32 aux = u[0];
+            float aux = u[0];
             u[0] = u[1];
             u[1] = aux;
         }
@@ -1111,8 +1111,8 @@ static int l_texture_meta(lua_State* L) {
 
 int l_poti_graphics_new_font(lua_State* L) {
     void* data = lua_touserdata(L, 1);
-    i32 data_size = luaL_checkinteger(L, 2);
-    i32 size = luaL_checkinteger(L, 3);
+    int data_size = luaL_checkinteger(L, 2);
+    int size = luaL_checkinteger(L, 3);
 
     Font* font = lua_newuserdata(L, sizeof(*font));
     luaL_setmetatable(L, FONT_META);
@@ -1122,13 +1122,13 @@ int l_poti_graphics_new_font(lua_State* L) {
 }
 
 static int l_poti_graphics_load_font(lua_State* L) {
-    const i8* path = luaL_checkstring(L, 1);
-    i32 size = luaL_optnumber(L, 2, 16);
+    const char* path = luaL_checkstring(L, 1);
+    int size = luaL_optnumber(L, 2, 16);
     Font* font = lua_newuserdata(L, sizeof(*font));
     luaL_setmetatable(L, FONT_META);
 
     size_t buf_size;
-    i8* font_data = (i8*)poti_fs_read_file(path, &buf_size);
+    char* font_data = (char*)poti_fs_read_file(path, &buf_size);
     init_font(font, font_data, buf_size, size);
     free(font_data);
     return 1;
@@ -1139,8 +1139,8 @@ static int l_poti_graphics_load_font(lua_State* L) {
  *******************/
 
 int s_compile_shader(const char *source, int type) {
-    u32 shader = glCreateShader(type);
-    const i8 *type_str = (i8*)(type == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT");
+    Uint32 shader = glCreateShader(type);
+    const char *type_str = (char*)(type == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT");
     // char shader_define[128];
     // sprintf(shader_define, "#version 140\n#define %s_SHADER\n", type_str);
 
@@ -1197,14 +1197,14 @@ int l_poti_graphics_new_shader(lua_State* L) {
 		return 1;
     }
 
-    const i8* vert_src = lua_tostring(L, -1);
-    const i8* frag_src = lua_tostring(L, -2);
+    const char* vert_src = lua_tostring(L, -1);
+    const char* frag_src = lua_tostring(L, -2);
     lua_pop(L, 2);
 
     Shader* shader = lua_newuserdata(L, sizeof(*shader));
     luaL_setmetatable(L, SHADER_META);
 
-    i32 vert, frag;
+    int vert, frag;
     vert = s_compile_shader(vert_src, GL_VERTEX_SHADER);
     frag = s_compile_shader(frag_src, GL_FRAGMENT_SHADER);
 
@@ -1227,7 +1227,7 @@ static int l_poti_shader__location(lua_State *L) {
     return 1;
 }
 
-static int s_send_shader_float(lua_State *L, Shader *s, i32 loc) {
+static int s_send_shader_float(lua_State *L, Shader *s, int loc) {
     int top = lua_gettop(L);
     int count = top - 2;
     float v[count];
@@ -1239,7 +1239,7 @@ static int s_send_shader_float(lua_State *L, Shader *s, i32 loc) {
     return 1;
 }
 
-static int s_send_shader_vector(lua_State *L, Shader *s, i32 loc) {
+static int s_send_shader_vector(lua_State *L, Shader *s, int loc) {
     int top = lua_gettop(L);
     int count = top - 2;
 
@@ -1280,11 +1280,11 @@ static int s_send_shader_vector(lua_State *L, Shader *s, i32 loc) {
     return 1;
 }
 
-static i32 s_send_shader_boolean(lua_State *L, Shader *s, i32 loc) {
-    i32 top = lua_gettop(L);
-    i32 count = top - 2;
-    i32 v[count];
-	i32 i;
+static int s_send_shader_boolean(lua_State *L, Shader *s, int loc) {
+    int top = lua_gettop(L);
+    int count = top - 2;
+    int v[count];
+	int i;
     for (i = 0; i < count; i++) {
         v[i] = lua_toboolean(L, i+3);
     }
@@ -1295,12 +1295,12 @@ static i32 s_send_shader_boolean(lua_State *L, Shader *s, i32 loc) {
 
 static int l_poti_shader__send(lua_State *L) {
     Shader *shader = luaL_checkudata(L, 1, SHADER_META);
-	i32 loc_tp = lua_type(L, 2);
-	i32 loc;
+	int loc_tp = lua_type(L, 2);
+	int loc;
 	if (loc_tp == LUA_TSTRING) loc = glGetUniformLocation(shader->handle, lua_tostring(L, 2));
 	else if (loc_tp == LUA_TNUMBER) loc = lua_tointeger(L, 2);
     
-    i32 tp = lua_type(L, 3);
+    int tp = lua_type(L, 3);
     if (tp == LUA_TNUMBER) s_send_shader_float(L, shader, loc);
     else if (tp == LUA_TTABLE) s_send_shader_vector(L, shader, loc);
     else if (tp == LUA_TBOOLEAN) s_send_shader_boolean(L, shader, loc);
@@ -1415,8 +1415,8 @@ int poti_graphics_end(lua_State* L) {
 /* Internal functions */
 
 int l_perspective_func(lua_State* L) {
-    f32 width, height;
-    f32 near, far;
+    float width, height;
+    float near, far;
     width = luaL_checknumber(L, 1);
     height = luaL_checknumber(L, 2);
     near = luaL_optnumber(L, 3, -1.f);
@@ -1426,7 +1426,7 @@ int l_perspective_func(lua_State* L) {
     return 0;
 }
 
-void init_vertex(Vertex* v, u32 size) {
+void init_vertex(Vertex* v, Uint32 size) {
     glGenBuffers(1, &v->vbo);
 #if !defined(__EMSCRIPTEN__)
     glGenVertexArrays(1, &v->vao);
@@ -1445,8 +1445,8 @@ void init_vertex(Vertex* v, u32 size) {
     glEnableVertexAttribArray(2);
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(VertexFormat), (void*)0);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(VertexFormat), (void*)(sizeof(f32) * 2));
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexFormat), (void*)(sizeof(f32) * 6));
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(VertexFormat), (void*)(sizeof(float) * 2));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexFormat), (void*)(sizeof(float) * 6));
 
 #if !defined(__EMSCRIPTEN__)
     glBindVertexArray(0);
@@ -1500,7 +1500,7 @@ void set_shader(Shader *s) {
 void set_target(Texture *t) {
     if (t->handle != 0 && t->fbo == 0) return;
     if (t->handle == 0 && t->fbo == 0) {
-		i32 ww, hh;
+		int ww, hh;
 		SDL_GetWindowSize(_window, &ww, &hh);
 		t->width = ww;
 		t->height = hh;
@@ -1527,7 +1527,7 @@ void set_target(Texture *t) {
 	glUniformMatrix4fv(s->u_modelview, 1, GL_FALSE, **(RENDER()->matrix.ptr));
 }
 
-void set_draw_mode(u8 draw_mode) {
+void set_draw_mode(Uint8 draw_mode) {
     if (draw_mode != RENDER()->draw_mode) {
         draw_vertex(VERTEX());
         clear_vertex(VERTEX());
@@ -1536,25 +1536,25 @@ void set_draw_mode(u8 draw_mode) {
 }
 
 void push_vertex(Vertex* vert, VertexFormat data) {
-    u32 size = sizeof(VertexFormat);
+    Uint32 size = sizeof(VertexFormat);
     if (vert->offset + size > vert->size) {
         vert->size *= 2;
         vert->data = realloc(vert->data, vert->size);
 		glBufferData(GL_ARRAY_BUFFER, vert->size, vert->data, GL_DYNAMIC_DRAW);
     }
-    i8 *vdata = ((i8*)vert->data)+vert->offset;
+    char *vdata = ((char*)vert->data)+vert->offset;
     vert->offset += size;
     memcpy(vdata, &data, size);
 }
 
-void push_vertices(Vertex *vert, u32 count, VertexFormat* vertices) {
-    u32 size = count * sizeof(VertexFormat);
+void push_vertices(Vertex *vert, Uint32 count, VertexFormat* vertices) {
+    Uint32 size = count * sizeof(VertexFormat);
     if (vert->offset + size > vert->size) {
         vert->size *= 2;
         vert->data = realloc(vert->data, vert->size);
 		glBufferData(GL_ARRAY_BUFFER, vert->size, vert->data, GL_DYNAMIC_DRAW);
     }
-    i8 *data = ((i8*)vert->data)+vert->offset;
+    char *data = ((char*)vert->data)+vert->offset;
     vert->offset += size;
     memcpy(data, vertices, size);
 }
@@ -1566,18 +1566,18 @@ void flush_vertex(Vertex *v) {
 void draw_vertex(Vertex *v) {
     if (v->offset <= 0) return;
     flush_vertex(v); 
-    u32 gl_modes[] = {
+    Uint32 gl_modes[] = {
         GL_LINES, GL_TRIANGLES
     };
     RENDER()->draw_calls++;
-    glDrawArrays(gl_modes[(i32)RENDER()->draw_mode], 0, v->offset / sizeof(VertexFormat));
+    glDrawArrays(gl_modes[(int)RENDER()->draw_mode], 0, v->offset / sizeof(VertexFormat));
 }
 
 /* Font */
 #define MAX_UNICODE 0x10FFFF
-u8* utf8_codepoint(u8* p, i32* codepoint) {
-    u8* n = NULL;
-    u8 c = *p;
+Uint8* utf8_codepoint(Uint8* p, int* codepoint) {
+    Uint8* n = NULL;
+    Uint8 c = *p;
     if (c < 0x80) {
         *codepoint = c;
         n = p + 1;
@@ -1611,7 +1611,7 @@ u8* utf8_codepoint(u8* p, i32* codepoint) {
     return n;
 }
 
-i32 init_font(Font* font, const void* data, size_t buf_size, i32 font_size) {
+int init_font(Font* font, const void* data, size_t buf_size, int font_size) {
     if (buf_size <= 0) return 0;
     font->data = malloc(buf_size);
     if (!font->data) {
@@ -1626,20 +1626,20 @@ i32 init_font(Font* font, const void* data, size_t buf_size, i32 font_size) {
         exit(EXIT_FAILURE);
     }
 
-    i32 ascent, descent, line_gap;
+    int ascent, descent, line_gap;
     font->size = font_size;
-    f32 fsize = font_size;
+    float fsize = font_size;
     font->scale = stbtt_ScaleForMappingEmToPixels(&font->info, fsize);
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &line_gap);
     font->baseline = ascent * font->scale;
 
-    i32 tw = 0, th = 0;
+    int tw = 0, th = 0;
 
-    i32 i;
+    int i;
     for (i = 0; i < 256; i++) {
-        i32 ax, bl;
-        i32 x0, y0, x1, y1;
-        i32 w, h;
+        int ax, bl;
+        int x0, y0, x1, y1;
+        int w, h;
 
         stbtt_GetCodepointHMetrics(&font->info, i, &ax, &bl);
         stbtt_GetCodepointBitmapBox(&font->info, i, font->scale, font->scale, &x0, &y0, &x1, &y1);
@@ -1662,8 +1662,8 @@ i32 init_font(Font* font, const void* data, size_t buf_size, i32 font_size) {
 
     const int final_size = tw * th;
 
-    u32* bitmap = malloc(final_size * sizeof(u32));
-    memset(bitmap, 0, final_size * sizeof(u32));
+    Uint32* bitmap = malloc(final_size * sizeof(Uint32));
+    memset(bitmap, 0, final_size * sizeof(Uint32));
     int x = 0;
     for (int i = 0; i < 256; i++) {
         int ww = font->c[i].bw;
@@ -1672,7 +1672,7 @@ i32 init_font(Font* font, const void* data, size_t buf_size, i32 font_size) {
         int ox, oy;
 
         unsigned char* bmp = stbtt_GetCodepointBitmap(&font->info, 0, font->scale, i, NULL, NULL, &ox, &oy);
-        // u32 pixels[ssize];
+        // Uint32 pixels[ssize];
         int xx, yy;
         xx = yy = 0;
         for (int j = 0; j < ssize; j++) {
@@ -1681,7 +1681,7 @@ i32 init_font(Font* font, const void* data, size_t buf_size, i32 font_size) {
             if (j != 0 && j % ww == 0) {
                 yy += tw;
             }
-            u8 *b = (u8*)&bitmap[xx + yy];
+            Uint8 *b = (Uint8*)&bitmap[xx + yy];
             b[0] = 255;
             b[1] = 255;
             b[2] = 255;
