@@ -13,10 +13,10 @@ extern SDL_GLContext _gl_ctx;
 extern lua_State* _L;
 
 #ifndef NO_EMBED
-extern const char _embed_font_ttf[];
-extern const long _embed_font_ttf_size;
+extern const char _font_ttf[];
+extern const long _font_ttf_size;
 
-extern const char _embed_shader_factory_lua[];
+extern const char _shader_factory_lua[];
 #else
 static int _shader_factory_lua;
 #endif
@@ -248,7 +248,7 @@ static int l_poti_graphics_init(lua_State* L) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 #ifndef NO_EMBED
-    if (luaL_dostring(L, _embed_shader_factory_lua) != LUA_OK) {
+    if (luaL_dostring(L, _shader_factory_lua) != LUA_OK) {
         const i8* error_buf = lua_tostring(L, -1);
         fprintf(stderr, "Failed to init shader factory: %s\n", error_buf);
         exit(EXIT_FAILURE);
@@ -268,7 +268,7 @@ static int l_poti_graphics_init(lua_State* L) {
         exit(EXIT_FAILURE);
     }
 #ifndef NO_EMBED
-    lua_rawsetp(L, LUA_REGISTRYINDEX, _embed_shader_factory_lua);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, _shader_factory_lua);
 #else
     lua_rawsetp(L, LUA_REGISTRYINDEX, &_shader_factory_lua);
 #endif
@@ -321,8 +321,8 @@ static int l_poti_graphics_init(lua_State* L) {
     /* default font */
     lua_pushcfunction(L, l_poti_graphics_new_font);
 #ifndef NO_EMBED
-    lua_pushlightuserdata(L, (void*)_embed_font_ttf);
-    lua_pushinteger(L, _embed_font_ttf_size);
+    lua_pushlightuserdata(L, (void*)_font_ttf);
+    lua_pushinteger(L, _font_ttf_size);
 #else
     void* data;
     size_t fsize;
@@ -1186,7 +1186,7 @@ int s_load_program(int vertex, int fragment) {
 
 int l_poti_graphics_new_shader(lua_State* L) {
 #ifndef NO_EMBED
-    lua_rawgetp(L, LUA_REGISTRYINDEX, _embed_shader_factory_lua); 
+    lua_rawgetp(L, LUA_REGISTRYINDEX, _shader_factory_lua); 
 #else
     lua_rawgetp(L, LUA_REGISTRYINDEX, &_shader_factory_lua); 
 #endif
