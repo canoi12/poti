@@ -39,7 +39,7 @@ static Uint32 s_audio_id = 0;
 struct AudioData {
     Uint32 id;
     Uint8 usage;
-    Uint32 size;
+    Uint64 size;
     Uint8* data;
     Uint8 loop;
     float volume, pitch;
@@ -214,19 +214,19 @@ static int l_poti_audio_load_audio(lua_State* L) {
 static int l_poti_audio_set_volume(lua_State* L) {
     int top = lua_gettop(L);
     if (top > 1) {
-        int index = luaL_checkinteger(L, 1) - 1;
-        float volume = luaL_checknumber(L, 2);
+        int index = (int)luaL_checkinteger(L, 1) - 1;
+        float volume = (float)luaL_checknumber(L, 2);
         AudioBuffer* bf = &(_audio.buffers[index]);
         bf->data.volume = volume;
     } else {
-        float volume = luaL_checknumber(L, 1);
+        float volume = (float)luaL_checknumber(L, 1);
         ma_device_set_master_volume(&(_audio.device), volume);
     }
 	return 0;
 }
 
 static int l_poti_audio_play(lua_State* L) {
-    int index = luaL_checknumber(L, 1) - 1;
+    int index = (int)luaL_checknumber(L, 1) - 1;
     if (index < 0 || index >= MAX_AUDIO_BUFFER_CHANNELS) {
         luaL_error(L, "Invalid audio instance");
         return 1;
@@ -237,7 +237,7 @@ static int l_poti_audio_play(lua_State* L) {
 }
 
 static int l_poti_audio_pause(lua_State* L) {
-    int index = luaL_checknumber(L, 1) - 1;
+    int index = (int)luaL_checknumber(L, 1) - 1;
     if (index < 0 || index >= MAX_AUDIO_BUFFER_CHANNELS) {
         luaL_error(L, "Invalid audio instance");
         return 1;
@@ -248,7 +248,7 @@ static int l_poti_audio_pause(lua_State* L) {
 }
 
 static int l_poti_audio_stop(lua_State* L) {
-    int index = luaL_checknumber(L, 1) - 1;
+    int index = (int)luaL_checknumber(L, 1) - 1;
     if (index < 0 || index >= MAX_AUDIO_BUFFER_CHANNELS) {
         luaL_error(L, "Invalid audio instance");
         return 1;
@@ -359,14 +359,14 @@ static int l_poti_audio__playing(lua_State* L) {
 
 static int l_poti_audio__volume(lua_State* L) {
     AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
-    float volume = luaL_checknumber(L, 2);
+    float volume = (float)luaL_checknumber(L, 2);
     ad->volume = volume;
     return 0;
 }
 
 static int l_poti_audio__pitch(lua_State* L) {
     AudioData* ad = luaL_checkudata(L, 1, AUDIO_META);
-    float pitch = luaL_checknumber(L, 2);
+    float pitch = (float)luaL_checknumber(L, 2);
     ad->pitch = pitch;
     return 0;
 }
@@ -494,7 +494,7 @@ Uint32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, short* output, Uint32 fram
     ma_decoder* decoder = &buffer->decoder;
     AudioData* data = &(buffer->data);
     float volume = data->volume;
-    float size = data->size * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS);
+    float size = (float)(data->size * ma_get_bytes_per_frame(AUDIO_DEVICE_FORMAT, AUDIO_DEVICE_CHANNELS));
 
     while (total_frames_read < frames) {
         Uint32 sample;
@@ -521,7 +521,7 @@ Uint32 s_read_and_mix_pcm_frames(AudioBuffer* buffer, short* output, Uint32 fram
         }
 
         for (sample = 0; sample < frames_read_this_iteration * AUDIO_DEVICE_CHANNELS; ++sample) {
-            output[total_frames_read * AUDIO_DEVICE_CHANNELS + sample] += temp[sample] * volume;
+            output[total_frames_read * AUDIO_DEVICE_CHANNELS + sample] += (short)(temp[sample] * volume);
         }
 
         total_frames_read += frames_read_this_iteration;

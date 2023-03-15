@@ -185,7 +185,7 @@ static int l_poti_graphics_init(lua_State* L) {
     major = 2;
     minor = 0;
 #else
-    profile = SDL_GL_CONTEXT_PROFILE_COMPATIBILITY;
+    profile = SDL_GL_CONTEXT_PROFILE_CORE;
     lua_getfield(L, -1, "es");
     if (!lua_isnil(L, -1) && lua_toboolean(L, -1))
         profile = SDL_GL_CONTEXT_PROFILE_ES;
@@ -194,12 +194,27 @@ static int l_poti_graphics_init(lua_State* L) {
     major = luaL_optinteger(L, -1, 3);
     lua_pop(L, 1);
     lua_getfield(L, -1, "minor");
-    minor = luaL_optinteger(L, -1, 0);
+    minor = luaL_optinteger(L, -1, 2);
     lua_pop(L, 1);
 #endif
+#if 0
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, profile);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
+#endif
+
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+#if defined(__EMSCRIPTEN__)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#else
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+#endif
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, ctx);
 #if !defined(__EMSCRIPTEN__)

@@ -4,7 +4,9 @@
 #include <errno.h>
 #include <sys/stat.h>
 
+#if !WIN32
 #include <dirent.h>
+#endif
 
 char header_name[256] = "GEN_H";
 FILE *fp;
@@ -120,7 +122,11 @@ int process_files(int argc, char **buf) {
 
 int write_file(const char *filename) {
     int filename_len = strlen(filename);
+#if WIN32
+    char var_name[1024];
+#else
     char var_name[filename_len + 1];
+#endif
     memcpy(var_name, filename, filename_len);
     var_name[filename_len] = '\0';
 

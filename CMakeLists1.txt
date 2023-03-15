@@ -1,0 +1,28 @@
+cmake_minimum_required(VERSION 3.0.0 FATAL_ERROR)
+
+project(poti VERSION 0.1.0 LANGUAGES C)
+
+include_directories(./ external external/glad/include)
+include_directories(external/lua/src)
+
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin)
+
+file(GLOB poti_sources poti.c impl.c src/*.c)
+file(GLOB lua_sources external/lua/src/*.c)
+
+if (WIN32)
+    message("Compiling for Windows")
+    set(LIBS opengl32 gdi32 winmm)
+    set(SDL2_DIR external/SDL2/MSVC/cmake)
+else()
+    set(LIBS GL)
+endif()
+
+find_package(SDL2 REQUIRED)
+
+include_directories(${SDL2_INCLUDE_DIRS})
+
+add_library(lua STATIC ${lua_sources})
+
+add_executable(poti ${poti_sources})
+target_link_libraries(poti ${SDL2_LIBRARIES} ${LIBS} lua)

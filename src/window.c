@@ -11,10 +11,10 @@ int l_poti_window_init(lua_State* L) {
     const char* title = luaL_checkstring(L, -1);
     lua_pop(L, 1);
     lua_getfield(L, -1, "width");
-    int width = luaL_checkinteger(L, -1);
+    int width = (int)luaL_checkinteger(L, -1);
     lua_pop(L, 1);
     lua_getfield(L, -1, "height");
-    int height = luaL_checkinteger(L, -1);
+    int height = (int)luaL_checkinteger(L, -1);
     lua_pop(L, 1);
 
     int window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
@@ -62,7 +62,7 @@ static int l_poti_window_width(lua_State* L) {
     int width = 0;
     if (!lua_isnil(L, 1)) {
         int height;
-        width = luaL_checkinteger(L, 1);
+        width = (int)luaL_checkinteger(L, 1);
         SDL_GetWindowSize(_window, NULL, &height);
         SDL_SetWindowSize(_window, width, height);
     }
@@ -76,7 +76,7 @@ static int l_poti_window_height(lua_State *L) {
     int height = 0;
     if (!lua_isnil(L, 1)) {
         int width;
-        height = luaL_checkinteger(L, 1);
+        height = (int)luaL_checkinteger(L, 1);
         SDL_GetWindowSize(_window, &width, NULL);
         SDL_SetWindowSize(_window, width, height);
     }
@@ -92,7 +92,7 @@ static int l_poti_window_size(lua_State *L) {
     if (lua_gettop(L) <= 0) SDL_GetWindowSize(_window, &size[0], &size[1]);
 
     for (int i = 0; i < lua_gettop(L); i++) {
-        size[i] = luaL_checkinteger(L, i+1);
+        size[i] = (int)luaL_checkinteger(L, i+1);
     }
     
 
@@ -109,7 +109,7 @@ static int l_poti_window_position(lua_State *L) {
     
     if (top > 0) {
         for (int i = 0; i < top; i++) {
-            pos[i] = luaL_checkinteger(L, i+1);
+            pos[i] = (int)luaL_checkinteger(L, i+1);
         }
         SDL_SetWindowPosition(_window, pos[0], pos[1]);
     }

@@ -1,6 +1,8 @@
 #include "poti.h"
+#if !WIN32
 #include <dirent.h>
 #include <unistd.h>
+#endif
 #include <sys/stat.h>
 #if !defined(POTI_NO_FILESYSTEM)
 
@@ -9,6 +11,7 @@ enum {
     DIR_NODE
 };
 
+#if !WIN32
 struct File {
     char type;
     int offset, size;
@@ -17,6 +20,7 @@ struct File {
         DIR* dir;
     };
 };
+#endif
 
 typedef struct FileHeader FileHeader;
 struct FileHeader {
