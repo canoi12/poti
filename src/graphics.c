@@ -461,10 +461,22 @@ static int l_poti_graphics_line(lua_State* L) {
 }
 
 typedef void(*DrawCircle)(float, float, float, int);
+#define MAX_CIRCLE_SIDES 32
 static void push_filled_circle(float xc, float yc, float radius, int segments) {
-    float sides = segments >= 4 ? segments : 4;
+    int sides = segments >= 4 ? segments : 4;
+    sides = (sides > MAX_CIRCLE_SIDES) ? MAX_CIRCLE_SIDES : sides;
     int bsize = (3*sides);
+#if WIN32
+    sides = MAX(sides, MAX_CIRCLE_SIDES);
+    bsize = sides * 2;
+    VertexFormat vertices[MAX_CIRCLE_SIDES*3];
+#else
     VertexFormat vertices[bsize];
+#endif
+    
+    // int bsize = (3*sides);
+    // bsize = bsize < (3*sides) ? 3*sides : bsize;
+    // VertexFormat vertices[bsize];
     // float vertices[bsize];
     double pi2 = 2.0 * M_PI;
 
@@ -515,7 +527,13 @@ static void push_lined_circle(float xc, float yc, float radius, int segments) {
     float sides = segments >= 4 ? segments : 4;
     int bsize = (2*sides);
     // float vertices[bsize];
+#if WIN32
+    sides = MAX(sides, MAX_CIRCLE_SIDES);
+    bsize = sides*2;
+    VertexFormat vertices[MAX_CIRCLE_SIDES*2];
+#else
     VertexFormat vertices[bsize];
+#endif
     double pi2 = 2.0 * M_PI;
 
     VertexFormat* v = vertices;
@@ -1123,7 +1141,7 @@ int l_poti_graphics_new_font(lua_State* L) {
 
 static int l_poti_graphics_load_font(lua_State* L) {
     const char* path = luaL_checkstring(L, 1);
-    int size = luaL_optnumber(L, 2, 16);
+    int size = (int)luaL_optnumber(L, 2, 16);
     Font* font = lua_newuserdata(L, sizeof(*font));
     luaL_setmetatable(L, FONT_META);
 
@@ -1150,7 +1168,7 @@ int s_compile_shader(const char *source, int type) {
     // glShaderSource(shader, 2, files, lengths);
 
     GLchar const *files[] = {source};
-    GLint lenghts[] = {strlen(source)};
+    GLint lenghts[] = {(int)strlen(source)};
 
     glShaderSource(shader, 1, files, lenghts);
 
@@ -1227,12 +1245,17 @@ static int l_poti_shader__location(lua_State *L) {
     return 1;
 }
 
+#define MAX_SHADER_UNIFORMS 32
 static int s_send_shader_float(lua_State *L, Shader *s, int loc) {
     int top = lua_gettop(L);
     int count = top - 2;
+#if WIN32
+    float v[MAX_SHADER_UNIFORMS];
+#else
     float v[count];
+#endif
     for (int i = 0; i < count; i++) {
-        v[i] = luaL_checknumber(L, i+3);
+        v[i] = (float)luaL_checknumber(L, i+3);
     }
     glUniform1fv(loc, count, v);
 
@@ -1242,8 +1265,9 @@ static int s_send_shader_float(lua_State *L, Shader *s, int loc) {
 static int s_send_shader_vector(lua_State *L, Shader *s, int loc) {
     int top = lua_gettop(L);
     int count = top - 2;
+    if (count < 1) return 0;
 
-    int len = lua_rawlen(L, 3);
+    int len = (int)lua_rawlen(L, 3);
     PFNGLUNIFORM2FVPROC fns[] = {
         glUniform1fv,
         glUniform2fv,
@@ -1259,7 +1283,12 @@ static int s_send_shader_vector(lua_State *L, Shader *s, int loc) {
     }
 
     PFNGLUNIFORM2FVPROC glUniformfv = fns[len-1];
+#if WIN32
+    // float v[MAX_SHADER_UNIFORMS*len]; fuck
+    float v[MAX_SHADER_UNIFORMS*4];
+#else
     float v[count*len];
+#endif
     int i, j;
     float *pv = v;
 
@@ -1267,7 +1296,7 @@ static int s_send_shader_vector(lua_State *L, Shader *s, int loc) {
         for (j = 0; j < len; j++) {
             lua_pushnumber(L, j+1);
             lua_gettable(L, 3+i);
-            *pv = lua_tonumber(L, -1);
+            *pv = (float)lua_tonumber(L, -1);
             lua_pop(L, 1);
             pv++;
         }
@@ -1283,10 +1312,14 @@ static int s_send_shader_vector(lua_State *L, Shader *s, int loc) {
 static int s_send_shader_boolean(lua_State *L, Shader *s, int loc) {
     int top = lua_gettop(L);
     int count = top - 2;
+#if WIN32
+    int v[MAX_SHADER_UNIFORMS];
+#else
     int v[count];
+#endif
 	int i;
     for (i = 0; i < count; i++) {
-        v[i] = lua_toboolean(L, i+3);
+        v[i] = (int)lua_toboolean(L, i+3);
     }
     glUniform1iv(loc, count, v);
 
@@ -1298,7 +1331,7 @@ static int l_poti_shader__send(lua_State *L) {
 	int loc_tp = lua_type(L, 2);
 	int loc;
 	if (loc_tp == LUA_TSTRING) loc = glGetUniformLocation(shader->handle, lua_tostring(L, 2));
-	else if (loc_tp == LUA_TNUMBER) loc = lua_tointeger(L, 2);
+	else if (loc_tp == LUA_TNUMBER) loc = (int)lua_tointeger(L, 2);
     
     int tp = lua_type(L, 3);
     if (tp == LUA_TNUMBER) s_send_shader_float(L, shader, loc);
@@ -1417,10 +1450,10 @@ int poti_graphics_end(lua_State* L) {
 int l_perspective_func(lua_State* L) {
     float width, height;
     float near, far;
-    width = luaL_checknumber(L, 1);
-    height = luaL_checknumber(L, 2);
-    near = luaL_optnumber(L, 3, -1.f);
-    far = luaL_optnumber(L, 4, 1.f);
+    width = (float)luaL_checknumber(L, 1);
+    height = (float)luaL_checknumber(L, 2);
+    near = (float)luaL_optnumber(L, 3, -1.f);
+    far = (float)luaL_optnumber(L, 4, 1.f);
 
     mat4x4_ortho(RENDER()->matrix.world, 0.f, width, height, 0.f, near, far);
     return 0;
@@ -1628,10 +1661,10 @@ int init_font(Font* font, const void* data, size_t buf_size, int font_size) {
 
     int ascent, descent, line_gap;
     font->size = font_size;
-    float fsize = font_size;
+    float fsize = (float)font_size;
     font->scale = stbtt_ScaleForMappingEmToPixels(&font->info, fsize);
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &line_gap);
-    font->baseline = ascent * font->scale;
+    font->baseline = (int)(ascent * font->scale);
 
     int tw = 0, th = 0;
 
@@ -1647,9 +1680,9 @@ int init_font(Font* font, const void* data, size_t buf_size, int font_size) {
         w = x1 - x0;
         h = y1 - y0;
 
-        font->c[i].ax = ax * font->scale;
+        font->c[i].ax = (int)(ax * font->scale);
         font->c[i].ay = 0;
-        font->c[i].bl = bl * font->scale;
+        font->c[i].bl = (int)(bl * font->scale);
         font->c[i].bw = w;
         font->c[i].bh = h;
         font->c[i].bt = font->baseline + y0;
