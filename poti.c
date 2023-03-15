@@ -154,7 +154,7 @@ int poti_init(int argc, char** argv) {
     }
 
 #ifndef NO_EMBED
-    if (luaL_dostring(L, _embed_boot_lua) != LUA_OK) {
+    if (luaL_dostring(L, _boot_lua) != LUA_OK) {
 		const char* error_buf = lua_tostring(L, -1);
 		fprintf(stderr, "Failed to load poti lua boot: %s\n", error_buf);
 		exit(EXIT_FAILURE);

@@ -17,3 +17,5 @@ cross
 VC
 external/SDL2
 .cache
+bin/
+build/

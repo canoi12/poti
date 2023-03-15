@@ -61,6 +61,7 @@ int process_args(int argc, char **argv) {
         fprintf(stdout, "usage: ./gen [-n header_name -t target_file] file1.txt file2.bin ...\n");
         return 1;
     }
+    fprintf(stdout, "Embedding files: ");
     arg = 1;
     while (arg < argc) {
         char *c = argv[arg];
@@ -71,10 +72,12 @@ int process_args(int argc, char **argv) {
                 default: break;
             }
         } else {
+            fprintf(stdout, "%s ", argv[arg]);
             process_files(argc, argv);
         }
         arg++;
     }
+    fprintf(stdout, "\n");
 
     return 0;
 }
@@ -121,9 +124,12 @@ int write_file(const char *filename) {
     memcpy(var_name, filename, filename_len);
     var_name[filename_len] = '\0';
 
-    char *p;
-    while((p = strchr(var_name, '.')) || (p = strchr(var_name, '/')))
-        *p = '_';
+    char *p = var_name;
+    while (strchr(p, '/')) p = strchr(p, '/') + 1;
+    if (*p == '/' || *p == '\\') p++;
+    char* pp;
+    while((pp = strchr(p, '.')) || (pp = strchr(p, '/')))
+        *pp = '_';
 
     FILE *f = fopen(filename, "rb");
     if (f == NULL) {
@@ -134,7 +140,7 @@ int write_file(const char *filename) {
     fseek(f, 0, SEEK_SET);
     long bytes_remaining = size;
     char rd_buf;
-    fprintf(fp, "const char _%s[] = {\n", var_name);
+    fprintf(fp, "const char _%s[] = {\n", p);
     while(bytes_remaining > 0) {
         fread(&rd_buf, 1, 1, f);
         fprintf(fp, "%d", rd_buf);
@@ -150,7 +156,7 @@ int write_file(const char *filename) {
 	size++;
     }
     fprintf(fp, "\n};\n");
-    fprintf(fp, "const long _%s_size = %ld;\n", var_name, size);
+    fprintf(fp, "const long _%s_size = %ld;\n", p, size);
     fclose(f);
     return 1;
 }
