@@ -126,6 +126,8 @@ static void set_texture(Texture*);
 static void set_shader(Shader*);
 static void set_target(Texture*);
 static void set_draw_mode(Uint8 draw_mode);
+static void set_blend_mode(int, int);
+static void set_clip_rect(int, int, int, int);
 
 static void push_vertex(Vertex*, VertexFormat);
 static void push_vertices(Vertex*, Uint32, VertexFormat*);
@@ -178,43 +180,7 @@ static int l_poti_graphics_init(lua_State* L) {
     lua_rawsetp(L, LUA_REGISTRYINDEX, l_perspective_func);
 
     SDL_Window* window = lua_touserdata(L, 2);
-    lua_getfield(L, 1, "gl");
-    int profile, major, minor;
-#if defined(__EMSCRIPTEN__)
-    profile = SDL_GL_CONTEXT_PROFILE_ES; 
-    major = 2;
-    minor = 0;
-#else
-    profile = SDL_GL_CONTEXT_PROFILE_CORE;
-    lua_getfield(L, -1, "es");
-    if (!lua_isnil(L, -1) && lua_toboolean(L, -1))
-        profile = SDL_GL_CONTEXT_PROFILE_ES;
-    lua_pop(L, 1);
-    lua_getfield(L, -1, "major");
-    major = luaL_optinteger(L, -1, 3);
-    lua_pop(L, 1);
-    lua_getfield(L, -1, "minor");
-    minor = luaL_optinteger(L, -1, 2);
-    lua_pop(L, 1);
-#endif
-#if 0
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, profile);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
-#endif
 
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-#if defined(__EMSCRIPTEN__)
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-#else
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-#endif
     SDL_GLContext ctx = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, ctx);
 #if !defined(__EMSCRIPTEN__)
@@ -223,7 +189,6 @@ static int l_poti_graphics_init(lua_State* L) {
         exit(EXIT_FAILURE);
     }
 #endif
-    lua_pop(L, 1);
 
     const Uint8 *version = glGetString(GL_VERSION);
     const Uint8 *glsl = glGetString(GL_SHADING_LANGUAGE_VERSION);
