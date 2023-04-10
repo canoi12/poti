@@ -21,13 +21,9 @@
 #endif
 
 #ifdef _WIN32
-#define SDL_MAIN_HANDLED
-#ifdef __MINGW32__
-#include <SDL2/SDL.h>
-#else
+// #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <SDL_opengl.h>
-#endif
 #else
 #include <SDL2/SDL.h>
 #if !defined(__EMSCRIPTEN__)

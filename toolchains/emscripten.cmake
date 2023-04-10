@@ -1,0 +1,4 @@
+set(CMAKE_SYSTEM_NAME Emscripten)
+
+set(CMAKE_C_COMPILER emcc)
+set(CMAKE_CXX_COMPILER em++)
