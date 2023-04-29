@@ -1,6 +1,8 @@
 set(CMAKE_SYSTEM_NAME Darwin)
 
-set(OSXCROSS_PATH /opt/osxcross)
+if (NOT OSXCROSS_PATH)
+	set(OSXCROSS_PATH /opt/osxcross)
+endif()
 set(OSXCROSS_SDK "${OSXCROSS_PATH}/SDK/MacOSX10.11.sdk/")
 set(OSXCROSS_PKG_PATH "${OSXCROSS_PATH}/macports/pkgs/opt/local")
 set(TOOLCHAIN_PREFIX x86_64-apple-darwin15)

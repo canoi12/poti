@@ -7,10 +7,10 @@ file(GLOB EMBED_FILES embed/*)
 message("Compiling for ${CMAKE_SYSTEM_NAME}")
 
 if (CMAKE_SYSTEM_NAME MATCHES "Emscripten")
-    set(USE_FLAGS "-s USE_SDL=2 -s EXPORTED_FUNCTIONS=\"['_malloc']\"")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${USE_FLAGS}")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${USE_FLAGS}")
-    set(CMAKE_EXECUTABLE_SUFFIX .html)
+    set(USE_FLAGS "-s USE_SDL=2 ")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s USE_SDL=2 -s FULL_ES2 -s EXPORTED_FUNCTIONS=\"['_malloc']\" --emrun")
+    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${USE_FLAGS}")
+    set(CMAKE_EXECUTABLE_SUFFIX .js)
     set(EMSCRIPTEN 1)
 endif()
 
@@ -73,4 +73,10 @@ if (WIN32 AND COPY_DLL)
     file(GLOB SDL_LIB /usr/local/cross-tools/${TOOLCHAIN_PREFIX}/bin/SDL2.dll)
     add_custom_command(TARGET poti POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDL_LIB} "$<TARGET_FILE_DIR:poti>")
+endif()
+
+if (EMSCRIPTEN)
+    file(GLOB INDEX_HTML ${CMAKE_CURRENT_SOURCE_DIR}/index.html)
+    add_custom_command(TARGET poti POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${INDEX_HTML} "$<TARGET_FILE_DIR:poti>")
 endif()

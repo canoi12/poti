@@ -101,7 +101,7 @@ local function _setup(glsl, es)
 
     defines = ""
     if es then
-	defines = "precision highp float;\n"
+	defines = "precision mediump float;\n"
     end
     if glsl < 130 then
         defines = defines .. [[
@@ -124,6 +124,8 @@ local function _setup(glsl, es)
 
 		local vert_src = string.format("%s\n%s\n%s", vert_top, vert, vert_main)
 		local frag_src = string.format("%s\n%s\n%s", frag_top, frag, frag_main)
+        -- print(vert_src)
+        -- print(frag_src)
 
 		return frag_src, vert_src
     end

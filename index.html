@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>poti</title>
+        <style>
+            #canvas {
+                border: 1px solid black;
+                display: block;
+                margin: 0 auto;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="canvas"></canvas>
+        <textarea id="output" rows="8"></textarea>
+        <script type="text/javascript">
+            var Module = {
+                print: (function() {
+                    var element = document.getElementById('output');
+                    return function(text) {
+                        element.innerHTML += text.replace('\n', '<br>', 'g') + '<br>';
+                    }
+                })(),
+                canvas: (function() {
+                var canvas = document.getElementById('canvas');
+
+                // As a default initial behavior, pop up an alert when webgl context is lost. To make your
+                // application robust, you may want to override this behavior before shipping!
+                // See http://www.khronos.org/registry/webgl/specs/latest/1.0/#5.15.2
+                canvas.addEventListener("webglcontextlost", function(e) { alert('WebGL context lost. You will need to reload the page.'); e.preventDefault(); }, false);
+
+                return canvas;
+                })()
+            };
+        </script>
+        <script type="text/javascript" src="poti.js"></script>
+    </body>
+</html>

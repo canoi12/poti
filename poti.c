@@ -117,6 +117,7 @@ int poti_init(int argc, char** argv) {
 
     luaL_openlibs(L);
     luaL_requiref(L, "poti",  luaopen_poti, 1);
+    fprintf(stdout, "Loaded poti Lua lib\n");
 
     lua_getglobal(L, "poti");
     lua_newtable(L);
@@ -148,7 +149,7 @@ int poti_init(int argc, char** argv) {
     flags |= SDL_INIT_EVENTS;
 #endif
 
-    if (SDL_Init(flags)) {
+    if (SDL_Init(flags) != 0) {
 		fprintf(stderr, "Failed to init SDL2: %s\n", SDL_GetError());
 		exit(EXIT_FAILURE);
     }
