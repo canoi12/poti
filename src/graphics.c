@@ -1475,7 +1475,7 @@ void init_vertex(Vertex* v, Uint32 size) {
 
     int pos = glGetAttribLocation(RENDER()->def_shader->handle, "a_Position");
     int color = glGetAttribLocation(RENDER()->def_shader->handle, "a_Color");
-    int texcoord = glGetAttribLocation(RENDER()->def_shader->handle, "a_Texcoord");
+    int texcoord = glGetAttribLocation(RENDER()->def_shader->handle, "a_TexCoord");
 
     glEnableVertexAttribArray(pos);
     glEnableVertexAttribArray(color);
