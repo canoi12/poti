@@ -1,3 +1,5 @@
+# MIGRATING ALL THE DEVELOPMENT TO [codeberg](https://codeberg.org/canoi12/poti)
+
 # poti
 Lua game framework with a tiny C core
 
